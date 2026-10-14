@@ -394,6 +394,7 @@ fn run_inner(args: &[String]) -> Result<(), String> {
     }
     std::fs::create_dir_all(&a.out).map_err(|e| e.to_string())?;
     let mut failed = Vec::new();
+    let mut report = String::new();
     for id in themes.ids() {
         for (suffix, edge) in [("", None), ("-vertical", Some(Edge::Left))] {
             let mut c = cfg.clone();
@@ -413,12 +414,17 @@ fn run_inner(args: &[String]) -> Result<(), String> {
             let (w, h, px) = render_job(&job, &file)?;
             let ink = ink_ratio(&px);
             let ok = ink > 0.02;
-            println!("{} {id}{suffix} {w}x{h} encre {:.1} %", if ok { "ok  " } else { "VIDE" }, ink * 100.0);
+            let line = format!("{} {id}{suffix} {w}x{h} encre {:.1} %", if ok { "ok  " } else { "VIDE" }, ink * 100.0);
+            println!("{line}");
+            report.push_str(&line);
+            report.push(char::from(10));
             if !ok {
                 failed.push(format!("{id}{suffix}"));
             }
         }
     }
+    // Sous le sous-système Windows la console n'est pas rattachée : le rapport est aussi écrit dans un fichier.
+    std::fs::write(format!("{}/report.txt", a.out), report).map_err(|e| e.to_string())?;
     if failed.is_empty() {
         Ok(())
     } else {

@@ -23,7 +23,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --target ${{ matrix.target }}
       - run: cargo build --release --workspace --target ${{ matrix.target }}
-      - name: Package
+      - name: Visual check of every theme
+        run: |
+          target/${{ matrix.target }}/release/forge-bar.exe --snapshot-all dist/themes-${{ matrix.arch }}
+          if ($LASTEXITCODE -ne 0) { Get-Content dist/themes-${{ matrix.arch }}/report.txt; exit 1 }
+      - name: Package zip
         shell: pwsh
         run: |
           $out = "dist/ForgeBar-${{ github.ref_name }}-${{ matrix.arch }}"
@@ -32,20 +36,38 @@ jobs:
           Copy-Item README.md, LICENSE $out
           Copy-Item themes $out/themes -Recurse
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
+      - name: Package MSI
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          wix build -arch ${{ matrix.arch }} -d Version=$v -d "BinDir=$PWD/target/${{ matrix.target }}/release" -d "RepoDir=$PWD" installer/forge-bar.wxs -o "dist/ForgeBar-$v-${{ matrix.arch }}.msi"
       - uses: actions/upload-artifact@v4
         with:
-          name: zip-${{ matrix.arch }}
-          path: dist/*.zip
+          name: dist-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.msi
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Checksums and winget manifest
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          $sha = @{}
+          foreach ($a in "x64", "x86") { $sha[$a] = (Get-FileHash "dist/ForgeBar-$v-$a.msi" -Algorithm SHA256).Hash }
+          Get-ChildItem dist -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
+          ./scripts/make-winget.ps1 -Version $v -ShaX64 $sha["x64"] -ShaX86 $sha["x86"] -Out winget
+          Compress-Archive -Path winget/* -DestinationPath dist/ForgeBar-winget-manifest.zip
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/*.zip --repo "${{ github.repository }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" dist/*.zip dist/*.msi dist/SHA256SUMS.txt --repo "${{ github.repository }}" --generate-notes

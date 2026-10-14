@@ -25,6 +25,14 @@ jobs:
         run: cargo test --workspace --target ${{ matrix.target }}
       - name: Build release
         run: cargo build --release --workspace --target ${{ matrix.target }}
+      - name: Visual check of every theme
+        run: |
+          target/${{ matrix.target }}/release/forge-bar.exe --snapshot-all dist/themes
+          if ($LASTEXITCODE -ne 0) { Get-Content dist/themes/report.txt; exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: theme-previews-${{ matrix.target }}
+          path: dist/themes
       - uses: actions/upload-artifact@v4
         with:
           name: forge-bar-${{ matrix.target }}

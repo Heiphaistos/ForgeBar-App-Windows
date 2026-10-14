@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Installateur MSI par utilisateur : aucun droit administrateur, installé dans %LOCALAPPDATA%\Programs\ForgeBar.
+     Compilation : wix build -arch x64 -d Version=0.2.0 -d BinDir=<dossier des exe> installer/forge-bar.wxs -o ForgeBar-0.2.0-x64.msi -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Forge Bar" Manufacturer="Heiphaistos" Version="$(Version)" UpgradeCode="5f0d2c1e-7a43-4d6b-9a52-3c8e1b7f4a90"
+           Scope="perUser" InstallerVersion="500" Language="1036" Codepage="1252">
+    <SummaryInformation Description="Forge Bar : barre d'extension Windows avec HUD Claude" />
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade DowngradeErrorMessage="Une version plus récente de Forge Bar est déjà installée." />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="ForgeBar" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="MenuDir" Name="Forge Bar" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="Files" Directory="INSTALLFOLDER">
+      <Component Id="BarExe">
+        <File Id="BarExeFile" Source="$(BinDir)\forge-bar.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="SettingsExe">
+        <File Id="SettingsExeFile" Source="$(BinDir)\forge-settings.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="LicenseDoc">
+        <File Id="LicenseFile" Source="$(RepoDir)\LICENSE" KeyPath="yes" />
+      </Component>
+      <Component Id="ReadmeDoc">
+        <File Id="ReadmeFile" Source="$(RepoDir)\README.md" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="Shortcuts" Directory="MenuDir">
+      <Component Id="MenuShortcuts">
+        <Shortcut Id="BarShortcut" Name="Forge Bar" Target="[INSTALLFOLDER]forge-bar.exe" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="SettingsShortcut" Name="Forge Bar - Paramètres" Target="[INSTALLFOLDER]forge-settings.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveMenuDir" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\ForgeBar" Name="Shortcuts" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Forge Bar" Level="1">
+      <ComponentGroupRef Id="Files" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+  </Package>
+</Wix>
