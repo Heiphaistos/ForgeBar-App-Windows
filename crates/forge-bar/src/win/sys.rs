@@ -1,11 +1,13 @@
 //! Mesures système (CPU, RAM, batterie, son, Wi-Fi) et actions (bureau, volume).
 //! Chaque mesure est un appel Windows peu coûteux, fait au rythme du minuteur.
 
+use super::audio::{self, DeviceWatcher, VolumeWatcher};
+use super::metrics::{Gpu, Net};
 use crate::widgets::{SysData, Wifi};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{FILETIME, HANDLE, HWND};
-use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
-use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
+use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioEndpointVolumeCallback};
+use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, IMMNotificationClient, MMDeviceEnumerator};
 use windows::Win32::NetworkManagement::WiFi::{
     wlan_intf_opcode_current_connection, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle,
     WlanQueryInterface, WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST,
@@ -24,18 +26,46 @@ fn ft(f: FILETIME) -> u64 {
     ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64
 }
 
+/// Sortie audio suivie : le volume est poussé par Windows via le rappel, jamais interrogé en boucle.
+struct Endpoint {
+    volume: IAudioEndpointVolume,
+    callback: IAudioEndpointVolumeCallback,
+}
+
+impl Drop for Endpoint {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self.volume.UnregisterControlChangeNotify(&self.callback);
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Sampler {
     prev_idle: u64,
     prev_total: u64,
-    audio: Option<IAudioEndpointVolume>,
+    audio: Option<Endpoint>,
+    enumerator: Option<(IMMDeviceEnumerator, IMMNotificationClient)>,
+    /// Fenêtre principale et message qui reçoivent les notifications audio.
+    target: (isize, u32),
     wlan: Option<HANDLE>,
+    gpu: Gpu,
+    net: Net,
+    /// Widgets coûteux : mesurés seulement s'ils sont dans une disposition.
+    pub want_gpu: bool,
+    pub want_net: bool,
     ticks: u64,
     pub data: SysData,
 }
 
 impl Drop for Sampler {
     fn drop(&mut self) {
+        self.audio = None;
+        if let Some((en, client)) = self.enumerator.take() {
+            unsafe {
+                let _ = en.UnregisterEndpointNotificationCallback(&client);
+            }
+        }
         if let Some(h) = self.wlan.take() {
             unsafe { WlanCloseHandle(h, None) };
         }
@@ -43,18 +73,54 @@ impl Drop for Sampler {
 }
 
 impl Sampler {
+    /// Branche les notifications audio sur la fenêtre principale.
+    pub fn watch_audio(&mut self, main: isize, msg: u32) {
+        self.target = (main, msg);
+        unsafe {
+            let Ok(en) = CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL) else {
+                return;
+            };
+            let client: IMMNotificationClient = DeviceWatcher { target: main, msg }.into();
+            if en.RegisterEndpointNotificationCallback(&client).is_ok() {
+                self.enumerator = Some((en, client));
+            }
+        }
+        self.sample_volume();
+    }
+
+    /// Message audio reçu de Windows (voir `audio::AUDIO_*`).
+    pub fn on_audio_message(&mut self, kind: usize, lparam: isize) {
+        match kind {
+            audio::AUDIO_VOLUME_CHANGED => self.data.volume = Some(audio::decode_volume(lparam)),
+            _ => {
+                self.audio = None; // sortie changée : on se rattache à la nouvelle
+                self.sample_volume();
+            }
+        }
+    }
+
     /// Appelé une fois par seconde, uniquement quand une barre est visible.
     pub fn sample(&mut self) {
         self.ticks += 1;
         self.sample_cpu();
         self.sample_ram();
         self.sample_battery();
-        self.sample_volume();
+        if self.data.volume.is_none() && self.ticks.is_multiple_of(10) {
+            self.sample_volume(); // pas de sortie audio au démarrage : on réessaie de temps en temps
+        }
         // Le Wi-Fi change rarement : toutes les 5 secondes suffisent.
         if self.ticks % 5 == 1 {
             self.data.wifi = self.sample_wifi();
         }
+        if self.want_gpu && self.ticks.is_multiple_of(2) {
+            self.data.gpu = self.gpu.sample();
+        }
+        if self.want_net {
+            self.data.net = self.net.sample();
+        }
         self.data.clock = chrono::Local::now().format("%H:%M").to_string();
+        let snapshot = self.data.clone();
+        self.data.hist.record(&snapshot);
     }
 
     fn sample_cpu(&mut self) {
@@ -88,13 +154,19 @@ impl Sampler {
 
     fn endpoint(&mut self) -> Option<&IAudioEndpointVolume> {
         if self.audio.is_none() {
+            let (main, msg) = self.target;
             self.audio = unsafe {
                 let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
                 let dev = en.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
-                dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()
+                let volume = dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()?;
+                let callback: IAudioEndpointVolumeCallback = VolumeWatcher { target: main, msg }.into();
+                if main != 0 {
+                    volume.RegisterControlChangeNotify(&callback).ok()?;
+                }
+                Some(Endpoint { volume, callback })
             };
         }
-        self.audio.as_ref()
+        self.audio.as_ref().map(|e| &e.volume)
     }
 
     fn sample_volume(&mut self) {
@@ -103,8 +175,7 @@ impl Sampler {
         };
         self.data.volume = self.endpoint().and_then(read);
         if self.data.volume.is_none() {
-            // Sortie audio changée ou débranchée : on la redemandera au prochain passage.
-            self.audio = None;
+            self.audio = None; // aucune sortie : on réessaiera
         }
     }
 
@@ -195,6 +266,13 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
 pub fn toggle_desktop() {
     let d = VIRTUAL_KEY(0x44);
     let inputs = [key(VK_LWIN, false), key(d, false), key(d, true), key(VK_LWIN, true)];
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+}
+
+/// Lecture / pause du média en cours, comme la touche multimédia du clavier.
+pub fn media_play_pause() {
+    let k = VIRTUAL_KEY(0xB3);
+    let inputs = [key(k, false), key(k, true)];
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }
 

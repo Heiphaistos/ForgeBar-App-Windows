@@ -10,6 +10,7 @@ mod theme;
 
 pub use color::{parse_color, Rgba};
 pub use condition::Condition;
+pub use layout::ALL as ALL_WIDGETS;
 pub use layout::{Layout, LayoutPreset, RowZones, Zones};
 pub use theme::{Backdrop, Background, BackgroundKind, Theme, ThemeColors, ThemeStore};
 

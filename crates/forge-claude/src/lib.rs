@@ -8,11 +8,15 @@
 //! Sources prévues au jalon 3 : l'Admin API d'Anthropic (coûts réels d'une
 //! organisation) et les limites d'abonnement Pro / Max, qui n'ont pas d'API publique.
 
-use chrono::{DateTime, Datelike, Duration, Local, Utc};
+pub mod admin;
+pub mod notify;
+pub mod subscription;
+
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc};
 use forge_config::{Budgets, ClaudeConfig, Price};
 use serde_json::Value;
-use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
+use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 /// Une réponse de l'assistant lue dans un log.
@@ -76,6 +80,14 @@ pub struct Session {
     pub last: DateTime<Utc>,
 }
 
+/// Un jour d'historique, pour les graphes du panneau détaillé.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Day {
+    pub date: NaiveDate,
+    pub cost_usd: f64,
+    pub tokens: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Summary {
     pub today: Totals,
@@ -83,9 +95,22 @@ pub struct Summary {
     pub month: Totals,
     /// Session Claude Code la plus récente.
     pub session: Option<Session>,
+    /// Les 14 derniers jours, du plus ancien au plus récent (jours sans activité compris).
+    pub daily: Vec<Day>,
+    /// Totaux du mois par modèle, du plus coûteux au moins coûteux.
+    pub models: Vec<(String, Totals)>,
+    /// Fenêtre de 5 heures en cours (estimation locale).
+    pub five_hour: Option<subscription::Block>,
+    /// Coûts réels de l'organisation (Admin API), si la source `api` est active.
+    pub org: Option<admin::OrgCost>,
+    /// Dernière erreur de l'Admin API (clé absente ou refusée, réseau), affichée dans le panneau.
+    pub org_error: Option<String>,
     pub files_scanned: usize,
     pub updated: Option<DateTime<Local>>,
 }
+
+/// Nombre de jours d'historique conservés et affichés.
+pub const HISTORY_DAYS: i64 = 14;
 
 pub fn price_for<'a>(model: &str, prices: &'a [Price]) -> Option<&'a Price> {
     prices.iter().find(|p| model.contains(&p.model_match))
@@ -160,13 +185,23 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
     let mut s = Summary { updated: Some(now), ..Summary::default() };
     let mut seen = HashSet::new();
     let mut latest: Option<&Entry> = None;
+    let mut days: HashMap<NaiveDate, Totals> = HashMap::new();
+    let mut models: HashMap<String, Totals> = HashMap::new();
+    let mut unique: Vec<&Entry> = Vec::with_capacity(entries.len());
     for e in entries {
         if let Some(k) = &e.key {
             if !seen.insert(k.clone()) {
                 continue;
             }
         }
+        unique.push(e);
         let day = e.ts.with_timezone(&Local).date_naive();
+        if day > today - Duration::days(HISTORY_DAYS) {
+            days.entry(day).or_default().add(e, &cfg.prices);
+        }
+        if day.year() == today.year() && day.month() == today.month() {
+            models.entry(e.model.clone()).or_default().add(e, &cfg.prices);
+        }
         if day == today {
             s.today.add(e, &cfg.prices);
         }
@@ -179,6 +214,22 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
         if latest.is_none_or(|l| e.ts > l.ts) {
             latest = Some(e);
         }
+    }
+    s.daily = (0..HISTORY_DAYS)
+        .rev()
+        .map(|back| {
+            let date = today - Duration::days(back);
+            let t = days.get(&date).copied().unwrap_or_default();
+            Day { date, cost_usd: t.cost_usd, tokens: t.tokens() }
+        })
+        .collect();
+    let mut models: Vec<_> = models.into_iter().filter(|(m, _)| !m.is_empty()).collect();
+    models.sort_by(|a, b| b.1.cost_usd.total_cmp(&a.1.cost_usd).then(b.1.tokens().cmp(&a.1.tokens())));
+    s.models = models;
+    if cfg.subscription.enabled {
+        unique.sort_by_key(|e| e.ts);
+        s.five_hour =
+            subscription::current_block(&unique, cfg.subscription.five_hour_limit_usd, &cfg.prices, Utc::now());
     }
     s.session = latest.map(|e| {
         let ctx = e.context_tokens();
@@ -193,25 +244,70 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
     s
 }
 
-/// Lit les logs du mois en cours (et des 7 derniers jours) puis agrège.
-pub fn scan(cfg: &ClaudeConfig, now: DateTime<Local>) -> Summary {
-    let dir = if cfg.logs_dir.is_empty() { default_logs_dir() } else { Some(PathBuf::from(&cfg.logs_dir)) };
-    let Some(dir) = dir else { return Summary::default() };
-    let since = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600);
-    let mut files = Vec::new();
-    recent_logs(&dir, since, &mut files);
-    let mut entries = Vec::new();
-    for f in &files {
-        let Ok(file) = std::fs::File::open(f) else { continue };
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            if let Some(e) = parse_line(&line) {
-                entries.push(e);
+/// Lecteur incrémental des logs : retient le décalage atteint dans chaque fichier et ne lit
+/// que les lignes ajoutées depuis le passage précédent. Garde les réponses des 40 derniers jours.
+#[derive(Default)]
+pub struct Scanner {
+    offsets: HashMap<PathBuf, u64>,
+    entries: Vec<Entry>,
+    seen: HashSet<String>,
+}
+
+const KEEP_DAYS: i64 = 40;
+
+impl Scanner {
+    fn read_new(&mut self, path: &Path) {
+        let Ok(mut file) = std::fs::File::open(path) else { return };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut offset = self.offsets.get(path).copied().unwrap_or(0);
+        if len < offset {
+            offset = 0; // fichier tronqué ou remplacé : on relit depuis le début, la déduplication évite les doublons
+        }
+        if file.seek(SeekFrom::Start(offset)).is_err() {
+            return;
+        }
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if !line.ends_with('\n') {
+                        break; // ligne encore en cours d'écriture : reprise au prochain passage
+                    }
+                    offset += n as u64;
+                    if let Some(e) = parse_line(&line) {
+                        if e.key.as_ref().is_none_or(|k| self.seen.insert(k.clone())) {
+                            self.entries.push(e);
+                        }
+                    }
+                }
             }
         }
+        self.offsets.insert(path.to_path_buf(), offset);
     }
-    let mut s = summarize(&entries, cfg, now);
-    s.files_scanned = files.len();
-    s
+
+    /// Lit ce qui est nouveau puis agrège.
+    pub fn scan(&mut self, cfg: &ClaudeConfig, now: DateTime<Local>) -> Summary {
+        let dir = if cfg.logs_dir.is_empty() { default_logs_dir() } else { Some(PathBuf::from(&cfg.logs_dir)) };
+        let Some(dir) = dir else { return Summary::default() };
+        let since = std::time::SystemTime::now() - std::time::Duration::from_secs(KEEP_DAYS as u64 * 24 * 3600);
+        let mut files = Vec::new();
+        recent_logs(&dir, since, &mut files);
+        for f in &files {
+            self.read_new(f);
+        }
+        self.offsets.retain(|p, _| files.contains(p));
+        let cutoff = Utc::now() - Duration::days(KEEP_DAYS);
+        if self.entries.iter().any(|e| e.ts < cutoff) {
+            self.entries.retain(|e| e.ts >= cutoff);
+            self.seen = self.entries.iter().filter_map(|e| e.key.clone()).collect();
+        }
+        let mut s = summarize(&self.entries, cfg, now);
+        s.files_scanned = files.len();
+        s
+    }
 }
 
 /// État d'un budget personnel fixé par l'utilisateur.
@@ -294,6 +390,54 @@ mod tests {
         let e = parse_line(&line("1", &ts, "claude-opus-4-5", 1_000, 500, 9_000, 40_000)).unwrap();
         let s = summarize(&[e], &cfg, now);
         assert!((s.session.unwrap().context_pct - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn incremental_scan_reads_only_new_lines() {
+        let dir = std::env::temp_dir().join(format!("forgebar-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        let now = Local::now();
+        let ts = now.with_timezone(&Utc).to_rfc3339();
+        let cfg = ClaudeConfig { logs_dir: dir.display().to_string(), ..ClaudeConfig::default() };
+        let mut sc = Scanner::default();
+
+        std::fs::write(&file, format!("{}\n", line("1", &ts, "claude-sonnet-4-5", 100, 0, 0, 0))).unwrap();
+        assert_eq!(sc.scan(&cfg, now).today.messages, 1);
+
+        // une ligne complète ajoutée + une ligne en cours d'écriture (sans saut de ligne)
+        let more = format!(
+            "{}\n{}",
+            line("2", &ts, "claude-sonnet-4-5", 100, 0, 0, 0),
+            line("3", &ts, "claude-sonnet-4-5", 1, 0, 0, 0)
+        );
+        let mut f = std::fs::OpenOptions::new().append(true).open(&file).unwrap();
+        std::io::Write::write_all(&mut f, more.as_bytes()).unwrap();
+        assert_eq!(sc.scan(&cfg, now).today.messages, 2, "la ligne partielle attend");
+        std::io::Write::write_all(&mut f, b"\n").unwrap();
+        assert_eq!(sc.scan(&cfg, now).today.messages, 3);
+        assert_eq!(sc.scan(&cfg, now).today.messages, 3, "rien de nouveau : pas de double comptage");
+
+        // fichier remplacé par un plus court : relu, sans doublon grâce aux clés
+        std::fs::write(&file, format!("{}\n", line("1", &ts, "claude-sonnet-4-5", 100, 0, 0, 0))).unwrap();
+        assert_eq!(sc.scan(&cfg, now).today.messages, 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn history_and_models() {
+        let cfg = ClaudeConfig::default();
+        let now = Local.with_ymd_and_hms(2026, 10, 15, 18, 0, 0).unwrap();
+        let ts = now.with_timezone(&Utc).to_rfc3339();
+        let yesterday = (now - Duration::days(1)).with_timezone(&Utc).to_rfc3339();
+        let a = parse_line(&line("1", &ts, "claude-sonnet-4-5", 1_000_000, 0, 0, 0)).unwrap();
+        let b = parse_line(&line("2", &yesterday, "claude-opus-4-5", 1_000_000, 0, 0, 0)).unwrap();
+        let s = summarize(&[a, b], &cfg, now);
+        assert_eq!(s.daily.len() as i64, HISTORY_DAYS);
+        assert!((s.daily.last().unwrap().cost_usd - 3.0).abs() < 1e-9);
+        assert!((s.daily[s.daily.len() - 2].cost_usd - 5.0).abs() < 1e-9);
+        assert_eq!(s.models[0].0, "claude-opus-4-5", "trié par coût décroissant");
     }
 
     #[test]

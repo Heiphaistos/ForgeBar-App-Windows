@@ -1,28 +1,40 @@
 //! Application Windows : une fenêtre de messages invisible porte les minuteurs,
-//! une fenêtre de barre par écran configuré.
+//! une fenêtre de barre par écran configuré, des panneaux à la demande.
 
+mod audio;
 mod bar;
+mod clipboard;
+mod cred;
+mod events;
+mod http;
+mod icons;
+mod media;
+mod metrics;
+mod panel;
+mod render;
+pub mod snapshot;
 mod sys;
+mod tray;
+mod wallpaper;
+mod workers;
 
-use bar::{Bar, Ctx, WM_APPBAR};
+use bar::Bar;
+use forge_claude::notify::Notifier;
 use forge_claude::Summary;
-use forge_config::{config_path, user_themes_dir, ClaudeConfig, Config, Mode, ThemeStore};
+use forge_config::{config_path, user_themes_dir, ClaudeConfig, Config, Mode, Rgba, ThemeStore, Weather};
+use panel::Panel;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use sys::Sampler;
-use windows::core::{w, Result, HSTRING, PCWSTR};
-use windows::Win32::Foundation::{
-    GetLastError, BOOL, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
-};
+use windows::core::{w, Result, HSTRING};
+use windows::Win32::Foundation::{GetLastError, BOOL, ERROR_ALREADY_EXISTS, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Direct2D::{D2D1CreateFactory, ID2D1Factory, D2D1_FACTORY_TYPE_SINGLE_THREADED};
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection, DWRITE_FACTORY_TYPE_SHARED,
 };
-use windows::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, InvalidateRect, ScreenToClient, ValidateRect, HDC, HMONITOR, MONITORINFO,
-};
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, InvalidateRect, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
@@ -32,38 +44,59 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-const WM_APP_CLAUDE: u32 = WM_APP + 2;
-const WM_APP_REBUILD: u32 = WM_APP + 3;
-const TIMER_TICK: usize = 1;
-const TIMER_CONFIG: usize = 2;
-const TIMER_AUTOHIDE: usize = 3;
-const MENU_SETTINGS: usize = 10;
-const MENU_THEMES: usize = 11;
-const MENU_RELOAD: usize = 12;
-const MENU_QUIT: usize = 13;
+pub(crate) const WM_APP_CLAUDE: u32 = WM_APP + 2;
+pub(crate) const WM_APP_REBUILD: u32 = WM_APP + 3;
+pub(crate) const WM_APP_AUDIO: u32 = WM_APP + 4;
+pub(crate) const WM_APP_MEDIA: u32 = WM_APP + 6;
+pub(crate) const WM_APP_WEATHER: u32 = WM_APP + 7;
+pub(crate) const WM_APP_CLOSE_PANEL: u32 = WM_APP + 8;
+pub(crate) const TIMER_TICK: usize = 1;
+pub(crate) const TIMER_CONFIG: usize = 2;
+pub(crate) const TIMER_AUTOHIDE: usize = 3;
 
-struct App {
-    cfg: Config,
-    cfg_mtime: Option<SystemTime>,
-    themes: ThemeStore,
-    d2d: ID2D1Factory,
-    dwrite: IDWriteFactory,
-    icon_font: String,
-    main: HWND,
-    bars: Vec<Bar>,
-    sampler: Sampler,
-    claude: Arc<Mutex<Summary>>,
-    claude_cfg: Arc<Mutex<ClaudeConfig>>,
-    claude_wake: Arc<AtomicBool>,
+pub(crate) struct MonitorInfo {
+    pub handle: HMONITOR,
+    pub rect: RECT,
+    pub primary: bool,
+}
+
+pub(crate) struct App {
+    pub cfg: Config,
+    pub cfg_mtime: Option<SystemTime>,
+    pub themes: ThemeStore,
+    pub d2d: ID2D1Factory,
+    pub dwrite: IDWriteFactory,
+    pub icon_font: String,
+    pub main: HWND,
+    pub bars: Vec<Bar>,
+    pub sampler: Sampler,
+    pub claude: Arc<Mutex<Summary>>,
+    pub claude_cfg: Arc<Mutex<ClaudeConfig>>,
+    pub claude_wake: Arc<AtomicBool>,
+    pub media: Arc<Mutex<Option<crate::widgets::Media>>>,
+    pub weather: Arc<Mutex<Option<crate::weather::Now>>>,
+    pub weather_cfg: Arc<Mutex<Weather>>,
+    pub weather_wake: Arc<AtomicBool>,
+    pub pack: icons::Pack,
+    pub pack_name: String,
+    /// Accent tiré du fond d'écran, si activé.
+    pub accent: Option<Rgba>,
+    pub popup: Option<Panel>,
+    /// Dernier panneau fermé : un clic sur le widget qui vient de le fermer ne doit pas le rouvrir.
+    pub popup_closed: Option<(panel::Kind, Instant)>,
+    pub floating: Option<Panel>,
+    pub clipboard: Vec<String>,
+    pub clipboard_listening: bool,
+    pub notifier: Notifier,
 }
 
 thread_local! {
-    static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+    pub(crate) static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
 /// Exécute `f` sur l'application si elle n'est pas déjà empruntée.
 /// Les messages reçus pendant un appel Windows réentrant tombent dans le traitement par défaut.
-fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
+pub(crate) fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
     APP.with(|cell| cell.try_borrow_mut().ok().and_then(|mut a| a.as_mut().map(f)))
 }
 
@@ -72,7 +105,7 @@ pub fn fatal(msg: &str) {
 }
 
 /// Message non bloquant, affiché depuis un autre fil pour ne pas suspendre la barre.
-fn warn(msg: String) {
+pub(crate) fn warn(msg: String) {
     std::thread::spawn(move || unsafe {
         MessageBoxW(None, &HSTRING::from(msg), w!("Forge Bar"), MB_ICONWARNING);
     });
@@ -82,7 +115,7 @@ fn mtime(p: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
-fn exe_path() -> String {
+pub(crate) fn exe_path() -> String {
     let mut buf = [0u16; 1024];
     let n = unsafe { GetModuleFileNameW(None, &mut buf) } as usize;
     String::from_utf16_lossy(&buf[..n])
@@ -123,12 +156,6 @@ fn icon_font(dwrite: &IDWriteFactory) -> String {
     "Segoe MDL2 Assets".into()
 }
 
-struct MonitorInfo {
-    handle: HMONITOR,
-    rect: RECT,
-    primary: bool,
-}
-
 unsafe extern "system" fn collect_monitor(h: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
     let list = &mut *(data.0 as *mut Vec<MonitorInfo>);
     let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -138,7 +165,7 @@ unsafe extern "system" fn collect_monitor(h: HMONITOR, _: HDC, _: *mut RECT, dat
     BOOL(1)
 }
 
-fn monitors() -> Vec<MonitorInfo> {
+pub(crate) fn monitors() -> Vec<MonitorInfo> {
     let mut list: Vec<MonitorInfo> = Vec::new();
     unsafe {
         let _ = EnumDisplayMonitors(None, None, Some(collect_monitor), LPARAM(&mut list as *mut _ as isize));
@@ -148,8 +175,16 @@ fn monitors() -> Vec<MonitorInfo> {
     list
 }
 
+fn layout_uses(cfg: &Config, id: &str) -> bool {
+    cfg.screen
+        .iter()
+        .filter(|s| s.enabled)
+        .any(|s| s.layout.rows().iter().any(|z| z.left.iter().chain(&z.center).chain(&z.right).any(|w| w == id)))
+}
+
 impl App {
-    fn rebuild(&mut self) {
+    pub(crate) fn rebuild(&mut self) {
+        self.close_popup();
         for mut b in self.bars.drain(..) {
             b.destroy();
         }
@@ -187,7 +222,10 @@ impl App {
                 )
             };
             let Ok(hwnd) = hwnd else { continue };
-            let theme = self.themes.get(&screen.theme);
+            let mut theme = self.themes.get(&screen.theme);
+            if let Some(a) = self.accent {
+                theme.colors.accent = crate::dominant::hex(a);
+            }
             let mut bar = Bar::new(hwnd, screen, theme, mon.rect, dx);
             bar.position();
             self.bars.push(bar);
@@ -200,10 +238,13 @@ impl App {
                 let _ = KillTimer(self.main, TIMER_AUTOHIDE);
             }
         }
+        self.sampler.want_gpu = layout_uses(&self.cfg, "gpu");
+        self.sampler.want_net = layout_uses(&self.cfg, "net");
+        self.refresh_floating();
         self.invalidate();
     }
 
-    fn reload(&mut self, force: bool) {
+    pub(crate) fn reload(&mut self, force: bool) {
         let path = config_path();
         let m = mtime(&path);
         if !force && m == self.cfg_mtime {
@@ -216,14 +257,34 @@ impl App {
                 self.themes = ThemeStore::load(Some(&user_themes_dir()));
                 *self.claude_cfg.lock().unwrap() = self.cfg.claude.clone();
                 self.claude_wake.store(true, Ordering::Relaxed);
+                *self.weather_cfg.lock().unwrap() = self.cfg.weather.clone();
+                self.weather_wake.store(true, Ordering::Relaxed);
                 set_autostart(self.cfg.general.autostart);
+                if self.pack_name != self.cfg.general.icon_pack {
+                    self.pack_name = self.cfg.general.icon_pack.clone();
+                    self.pack = icons::load(&self.pack_name, &self.d2d);
+                }
+                self.accent = self.cfg.general.accent_from_wallpaper.then(wallpaper::accent).flatten();
+                self.sync_clipboard_listener();
                 self.rebuild();
             }
             Err(e) => warn(format!("{}\n\nLa configuration précédente reste active.\n{}", e, path.display())),
         }
     }
 
-    fn invalidate(&self) {
+    pub(crate) fn sync_clipboard_listener(&mut self) {
+        let on = self.cfg.clipboard.enabled;
+        if on != self.clipboard_listening {
+            clipboard::listen(self.main, on);
+            self.clipboard_listening = on;
+        }
+        if !on {
+            self.clipboard.clear();
+        }
+        self.sampler.data.clipboard = on.then(|| self.clipboard.clone());
+    }
+
+    pub(crate) fn invalidate(&self) {
         for b in &self.bars {
             unsafe {
                 let _ = InvalidateRect(b.hwnd, None, false);
@@ -231,8 +292,8 @@ impl App {
         }
     }
 
-    fn autohide(&mut self) {
-        let mut p = POINT::default();
+    pub(crate) fn autohide(&mut self) {
+        let mut p = windows::Win32::Foundation::POINT::default();
         if unsafe { GetCursorPos(&mut p) }.is_err() {
             return;
         }
@@ -245,207 +306,19 @@ impl App {
             }
         }
     }
-}
 
-fn bar_index(app: &App, hwnd: HWND) -> Option<usize> {
-    app.bars.iter().position(|b| b.hwnd == hwnd)
-}
-
-fn lparam_point(lp: LPARAM) -> (i32, i32) {
-    ((lp.0 & 0xFFFF) as i16 as i32, ((lp.0 >> 16) & 0xFFFF) as i16 as i32)
-}
-
-fn click(hwnd: HWND, x: i32, y: i32) {
-    let id = with_app(|app| bar_index(app, hwnd).and_then(|i| app.bars[i].hit(x, y))).flatten();
-    match id.as_deref() {
-        Some("desktop") => sys::toggle_desktop(),
-        Some("wifi") => sys::open(w!("ms-settings:network-wifi")),
-        Some("battery") => sys::open(w!("ms-settings:batterysaver")),
-        Some("cpu") | Some("ram") => sys::open(w!("taskmgr.exe")),
-        Some("clock") => sys::open(w!("ms-settings:dateandtime")),
-        Some("sound") => {
-            with_app(|app| app.sampler.toggle_mute());
-        }
-        Some("claude") => {
-            with_app(|app| {
-                if let Some(i) = bar_index(app, hwnd) {
-                    app.bars[i].claude_expanded = !app.bars[i].claude_expanded;
-                }
-            });
-        }
-        _ => return,
+    /// Recopie les données des fils de fond dans les mesures affichées.
+    pub(crate) fn sync_shared(&mut self) {
+        self.sampler.data.media = self.media.lock().unwrap().clone();
+        self.sampler.data.weather = self.weather.lock().unwrap().clone();
     }
-    with_app(|app| app.invalidate());
-}
 
-fn open_settings() {
-    let exe = exe_path();
-    let settings = std::path::Path::new(&exe).with_file_name("forge-settings.exe");
-    let target = if settings.exists() { settings } else { config_path() };
-    sys::open(PCWSTR(HSTRING::from(target.as_os_str()).as_ptr()));
-}
-
-fn context_menu(hwnd: HWND) {
-    unsafe {
-        let Ok(menu) = CreatePopupMenu() else { return };
-        let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS, w!("Paramètres"));
-        let _ = AppendMenuW(menu, MF_STRING, MENU_THEMES, w!("Dossier des thèmes"));
-        let _ = AppendMenuW(menu, MF_STRING, MENU_RELOAD, w!("Recharger"));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quitter Forge Bar"));
-        let mut p = POINT::default();
-        let _ = GetCursorPos(&mut p);
-        let _ = SetForegroundWindow(hwnd);
-        let cmd =
-            TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, None).0 as usize;
-        let _ = DestroyMenu(menu);
-        match cmd {
-            MENU_SETTINGS => open_settings(),
-            MENU_THEMES => {
-                let dir = user_themes_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                sys::open(PCWSTR(HSTRING::from(dir.as_os_str()).as_ptr()));
-            }
-            MENU_RELOAD => {
-                with_app(|app| app.reload(true));
-            }
-            MENU_QUIT => {
-                with_app(|app| {
-                    for mut b in app.bars.drain(..) {
-                        b.destroy();
-                    }
-                });
-                PostQuitMessage(0);
-            }
-            _ => {}
+    pub(crate) fn close_popup(&mut self) {
+        if let Some(mut p) = self.popup.take() {
+            self.popup_closed = Some((p.kind, Instant::now()));
+            p.destroy();
         }
     }
-}
-
-unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_PAINT => {
-            let painted = with_app(|app| {
-                let App { bars, d2d, dwrite, icon_font, sampler, cfg, claude, .. } = app;
-                let summary = claude.lock().unwrap().clone();
-                let ctx = Ctx { d2d, dwrite, icon_font, sys: &sampler.data, claude: &summary, claude_cfg: &cfg.claude };
-                if let Some(b) = bars.iter_mut().find(|b| b.hwnd == hwnd) {
-                    let _ = b.paint(&ctx);
-                }
-            });
-            let _ = ValidateRect(hwnd, None);
-            if painted.is_none() {
-                return DefWindowProcW(hwnd, msg, wp, lp);
-            }
-            LRESULT(0)
-        }
-        WM_ERASEBKGND => LRESULT(1),
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-        WM_LBUTTONUP => {
-            let (x, y) = lparam_point(lp);
-            click(hwnd, x, y);
-            LRESULT(0)
-        }
-        WM_RBUTTONUP => {
-            context_menu(hwnd);
-            LRESULT(0)
-        }
-        WM_MOUSEWHEEL => {
-            let delta = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
-            let (sx, sy) = lparam_point(lp);
-            let mut p = POINT { x: sx, y: sy };
-            let _ = ScreenToClient(hwnd, &mut p);
-            with_app(|app| {
-                let over_sound =
-                    bar_index(app, hwnd).and_then(|i| app.bars[i].hit(p.x, p.y)).as_deref() == Some("sound");
-                if over_sound {
-                    app.sampler.change_volume(delta * 0.02);
-                    app.invalidate();
-                }
-            });
-            LRESULT(0)
-        }
-        WM_APPBAR => {
-            with_app(|app| {
-                if let Some(i) = bar_index(app, hwnd) {
-                    match wp.0 as u32 {
-                        windows::Win32::UI::Shell::ABN_POSCHANGED => app.bars[i].position(),
-                        windows::Win32::UI::Shell::ABN_FULLSCREENAPP if app.cfg.general.hide_on_fullscreen => {
-                            let _ = ShowWindow(hwnd, if lp.0 != 0 { SW_HIDE } else { SW_SHOWNOACTIVATE });
-                        }
-                        _ => {}
-                    }
-                }
-            });
-            LRESULT(0)
-        }
-        WM_DPICHANGED => {
-            with_app(|app| {
-                if let Some(i) = bar_index(app, hwnd) {
-                    app.bars[i].dpi = (wp.0 & 0xFFFF) as u32;
-                    app.bars[i].position();
-                }
-            });
-            LRESULT(0)
-        }
-        WM_DISPLAYCHANGE | WM_SETTINGCHANGE => {
-            // Écran branché, débranché ou zone de travail modifiée : on reconstruit après coup.
-            with_app(|app| {
-                let _ = PostMessageW(app.main, WM_APP_REBUILD, WPARAM(0), LPARAM(0));
-            });
-            DefWindowProcW(hwnd, msg, wp, lp)
-        }
-        _ => DefWindowProcW(hwnd, msg, wp, lp),
-    }
-}
-
-unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_TIMER => {
-            with_app(|app| match wp.0 {
-                TIMER_TICK => {
-                    if app.bars.iter().any(|b| !b.hidden) {
-                        app.sampler.sample();
-                        app.invalidate();
-                    }
-                }
-                TIMER_CONFIG => app.reload(false),
-                TIMER_AUTOHIDE => app.autohide(),
-                _ => {}
-            });
-            LRESULT(0)
-        }
-        WM_APP_CLAUDE => {
-            with_app(|app| app.invalidate());
-            LRESULT(0)
-        }
-        WM_APP_REBUILD => {
-            with_app(|app| app.rebuild());
-            LRESULT(0)
-        }
-        _ => DefWindowProcW(hwnd, msg, wp, lp),
-    }
-}
-
-/// Fil de fond : relit les logs Claude Code au rythme configuré, sans toucher à l'interface.
-fn spawn_claude(main: HWND, out: Arc<Mutex<Summary>>, cfg: Arc<Mutex<ClaudeConfig>>, wake: Arc<AtomicBool>) {
-    let main = main.0 as isize;
-    std::thread::spawn(move || loop {
-        let c = cfg.lock().unwrap().clone();
-        if c.enabled && c.sources.iter().any(|s| s == "claude_code") {
-            let s = forge_claude::scan(&c, chrono::Local::now());
-            *out.lock().unwrap() = s;
-            unsafe {
-                let _ = PostMessageW(HWND(main as _), WM_APP_CLAUDE, WPARAM(0), LPARAM(0));
-            }
-        }
-        for _ in 0..c.refresh_seconds.max(5) {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            if wake.swap(false, Ordering::Relaxed) {
-                break;
-            }
-        }
-    });
 }
 
 pub fn run() -> Result<()> {
@@ -470,21 +343,16 @@ pub fn run() -> Result<()> {
 
         let hinstance = GetModuleHandleW(None)?;
         let cursor = LoadCursorW(None, IDC_ARROW)?;
-        let bar_class = WNDCLASSW {
-            lpfnWndProc: Some(bar_proc),
+        let class = |name: windows::core::PCWSTR, proc: WNDPROC| WNDCLASSW {
+            lpfnWndProc: proc,
             hInstance: hinstance.into(),
             hCursor: cursor,
-            lpszClassName: w!("ForgeBarWindow"),
+            lpszClassName: name,
             ..Default::default()
         };
-        let main_class = WNDCLASSW {
-            lpfnWndProc: Some(main_proc),
-            hInstance: hinstance.into(),
-            lpszClassName: w!("ForgeBarMain"),
-            ..Default::default()
-        };
-        RegisterClassW(&bar_class);
-        RegisterClassW(&main_class);
+        RegisterClassW(&class(w!("ForgeBarWindow"), Some(events::bar_proc)));
+        RegisterClassW(&class(w!("ForgeBarPanel"), Some(events::panel_proc)));
+        RegisterClassW(&class(w!("ForgeBarMain"), Some(events::main_proc)));
         let main = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("ForgeBarMain"),
@@ -502,12 +370,20 @@ pub fn run() -> Result<()> {
 
         let claude = Arc::new(Mutex::new(Summary::default()));
         let claude_cfg = Arc::new(Mutex::new(cfg.claude.clone()));
-        let wake = Arc::new(AtomicBool::new(false));
+        let claude_wake = Arc::new(AtomicBool::new(false));
+        let media = Arc::new(Mutex::new(None));
+        let weather = Arc::new(Mutex::new(None));
+        let weather_cfg = Arc::new(Mutex::new(cfg.weather.clone()));
+        let weather_wake = Arc::new(AtomicBool::new(false));
         set_autostart(cfg.general.autostart);
+        let pack = icons::load(&cfg.general.icon_pack, &d2d);
         let mut app = App {
             cfg_mtime: mtime(&path),
             themes: ThemeStore::load(Some(&user_themes_dir())),
             icon_font: icon_font(&dwrite),
+            accent: cfg.general.accent_from_wallpaper.then(wallpaper::accent).flatten(),
+            pack_name: cfg.general.icon_pack.clone(),
+            pack,
             cfg,
             d2d,
             dwrite,
@@ -516,22 +392,45 @@ pub fn run() -> Result<()> {
             sampler: Sampler::default(),
             claude: claude.clone(),
             claude_cfg: claude_cfg.clone(),
-            claude_wake: wake.clone(),
+            claude_wake: claude_wake.clone(),
+            media: media.clone(),
+            weather: weather.clone(),
+            weather_cfg: weather_cfg.clone(),
+            weather_wake: weather_wake.clone(),
+            popup: None,
+            popup_closed: None,
+            floating: None,
+            clipboard: Vec::new(),
+            clipboard_listening: false,
+            notifier: Notifier::default(),
         };
+        app.sampler.watch_audio(main.0 as isize, WM_APP_AUDIO);
+        app.sync_clipboard_listener();
+        app.sampler.want_gpu = layout_uses(&app.cfg, "gpu");
+        app.sampler.want_net = layout_uses(&app.cfg, "net");
         app.sampler.sample();
         APP.with(|cell| *cell.borrow_mut() = Some(app));
         with_app(|app| app.rebuild());
 
         SetTimer(main, TIMER_TICK, 1000, None);
         SetTimer(main, TIMER_CONFIG, 2000, None);
-        spawn_claude(main, claude, claude_cfg, wake);
+        workers::spawn_claude(main, WM_APP_CLAUDE, claude, claude_cfg, claude_wake);
+        workers::spawn_weather(main, WM_APP_WEATHER, weather, weather_cfg, weather_wake);
+        media::spawn(main, WM_APP_MEDIA, media);
+        tray::add(main);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        tray::remove(main);
+        clipboard::listen(main, false);
         with_app(|app| {
+            app.close_popup();
+            if let Some(mut f) = app.floating.take() {
+                f.destroy();
+            }
             for mut b in app.bars.drain(..) {
                 b.destroy();
             }

@@ -7,4 +7,10 @@ license.workspace = true
 
 [dependencies]
 forge-config = { path = "../forge-config" }
+serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Credentials", "Win32_System_Console"]
