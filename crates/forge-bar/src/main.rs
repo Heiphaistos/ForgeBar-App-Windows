@@ -1,5 +1,7 @@
 //! Forge Bar : barre d'extension Windows légère.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+// Lint de clippy récent (1.98) : les pixels BGRA sont lus par paquets de 4, as_chunks n'apporte rien ici.
+#![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 
 mod calendar;
 mod content;
