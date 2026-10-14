@@ -168,8 +168,8 @@ function themeBox(t) {
     const g = gen;
     box._job = async () => {
       try {
-        const url = await fetchPng('/preview.png?theme=' + encodeURIComponent(t.id) + '&width=900' + presetParam());
-        if (g === gen) box.append(h('img', { src: url, alt: 'Aperçu de ' + t.name }));
+        const url = await fetchPng('/preview.png?theme=' + encodeURIComponent(t.id) + '&width=340');
+        if (g === gen) box.replaceChildren(h('img', { src: url, alt: 'Aperçu de ' + t.name }));
       } catch { /* le repli CSS reste affiché */ }
     };
     io.observe(box);

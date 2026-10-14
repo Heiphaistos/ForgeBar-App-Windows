@@ -274,7 +274,7 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
         "wifi" => {
             let w = sys.wifi.as_ref()?;
             let (t, lvl) = if w.ssid.is_empty() {
-                ("Déconnecté".to_string(), Level::Secondary)
+                (String::new(), Level::Secondary)
             } else {
                 (w.ssid.clone(), if w.signal < 30 { Level::Warning } else { Level::Normal })
             };

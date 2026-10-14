@@ -71,6 +71,9 @@ fn key(parts: &[&str], stamps: &[u64]) -> String {
 fn run_snapshot(exe: &Path, spec: &Spec, config: &Path, out: &Path, appdata: Option<&Path>) -> Result<(), String> {
     let mut cmd = Command::new(exe);
     cmd.arg("--snapshot").arg(out).arg("--theme").arg(&spec.theme).arg("--width").arg(spec.width.to_string());
+    if spec.width <= 480 {
+        cmd.arg("--thumb"); // vignette de galerie
+    }
     if let Some(p) = &spec.preset {
         cmd.args(["--preset", p]);
     }

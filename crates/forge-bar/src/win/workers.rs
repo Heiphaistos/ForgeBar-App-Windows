@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 fn post(main: isize, msg: u32) {
@@ -63,6 +64,10 @@ pub fn spawn_claude(
 ) {
     let main = main.0 as isize;
     std::thread::spawn(move || {
+        // La première lecture des logs (plusieurs gigaoctets) ne doit jamais gêner l'interface.
+        unsafe {
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
         let mut scanner = Scanner::default();
         let mut org: (Option<admin::OrgCost>, Option<String>) = (None, None);
         let mut org_at: Option<Instant> = None;

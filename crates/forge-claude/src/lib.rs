@@ -14,19 +14,19 @@ pub mod subscription;
 
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc};
 use forge_config::{Budgets, ClaudeConfig, Price};
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Une réponse de l'assistant lue dans un log.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     /// Identifiant de déduplication (message + requête) ; les logs répètent parfois une ligne.
-    pub key: Option<String>,
+    pub key: Option<u64>,
     pub ts: DateTime<Utc>,
-    pub session: String,
-    pub model: String,
+    pub session: Arc<str>,
+    pub model: Arc<str>,
     pub input: u64,
     pub output: u64,
     pub cache_write: u64,
@@ -124,34 +124,70 @@ pub fn cost(e: &Entry, p: &Price) -> f64 {
         / 1_000_000.0
 }
 
-fn u(v: &Value, k: &str) -> u64 {
-    v.get(k).and_then(Value::as_u64).unwrap_or(0)
+/// Champs utiles d'une ligne de log ; tout le reste (contenu des messages, outils) est ignoré
+/// sans être alloué, ce qui compte quand les logs pèsent plusieurs gigaoctets.
+#[derive(serde::Deserialize)]
+struct RawLine<'a> {
+    #[serde(rename = "type")]
+    kind: Option<&'a str>,
+    timestamp: Option<&'a str>,
+    #[serde(rename = "sessionId")]
+    session: Option<&'a str>,
+    #[serde(rename = "requestId")]
+    request: Option<&'a str>,
+    message: Option<RawMessage<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawMessage<'a> {
+    id: Option<&'a str>,
+    model: Option<&'a str>,
+    usage: Option<RawUsage>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct RawUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    cache_creation_input_tokens: u64,
+    #[serde(default)]
+    cache_read_input_tokens: u64,
+}
+
+fn hash_key(msg: &str, request: Option<&str>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    msg.hash(&mut h);
+    request.hash(&mut h);
+    h.finish()
 }
 
 /// Lit une ligne JSONL ; renvoie `None` si ce n'est pas une réponse avec usage.
 pub fn parse_line(line: &str) -> Option<Entry> {
-    let v: Value = serde_json::from_str(line).ok()?;
-    if v.get("type").and_then(Value::as_str) != Some("assistant") {
+    // Neuf lignes sur dix (messages utilisateur, résultats d'outils) n'ont pas de bloc usage :
+    // une recherche de sous-chaîne évite de les analyser.
+    if !line.contains("\"usage\"") {
         return None;
     }
-    let msg = v.get("message")?;
-    let usage = msg.get("usage")?;
-    let ts = v.get("timestamp").and_then(Value::as_str)?;
-    let ts = DateTime::parse_from_rfc3339(ts).ok()?.with_timezone(&Utc);
-    let key = match (msg.get("id").and_then(Value::as_str), v.get("requestId").and_then(Value::as_str)) {
-        (Some(m), Some(r)) => Some(format!("{m}:{r}")),
-        (Some(m), None) => Some(m.to_string()),
-        _ => None,
-    };
+    let raw: RawLine = serde_json::from_str(line).ok()?;
+    if raw.kind != Some("assistant") {
+        return None;
+    }
+    let msg = raw.message?;
+    let usage = msg.usage?;
+    let ts = DateTime::parse_from_rfc3339(raw.timestamp?).ok()?.with_timezone(&Utc);
     Some(Entry {
-        key,
+        key: msg.id.map(|m| hash_key(m, raw.request)),
         ts,
-        session: v.get("sessionId").and_then(Value::as_str).unwrap_or_default().to_string(),
-        model: msg.get("model").and_then(Value::as_str).unwrap_or_default().to_string(),
-        input: u(usage, "input_tokens"),
-        output: u(usage, "output_tokens"),
-        cache_write: u(usage, "cache_creation_input_tokens"),
-        cache_read: u(usage, "cache_read_input_tokens"),
+        session: raw.session.unwrap_or_default().into(),
+        model: msg.model.unwrap_or_default().into(),
+        input: usage.input_tokens,
+        output: usage.output_tokens,
+        cache_write: usage.cache_creation_input_tokens,
+        cache_read: usage.cache_read_input_tokens,
     })
 }
 
@@ -189,8 +225,8 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
     let mut models: HashMap<String, Totals> = HashMap::new();
     let mut unique: Vec<&Entry> = Vec::with_capacity(entries.len());
     for e in entries {
-        if let Some(k) = &e.key {
-            if !seen.insert(k.clone()) {
+        if let Some(k) = e.key {
+            if !seen.insert(k) {
                 continue;
             }
         }
@@ -200,7 +236,7 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
             days.entry(day).or_default().add(e, &cfg.prices);
         }
         if day.year() == today.year() && day.month() == today.month() {
-            models.entry(e.model.clone()).or_default().add(e, &cfg.prices);
+            models.entry(e.model.to_string()).or_default().add(e, &cfg.prices);
         }
         if day == today {
             s.today.add(e, &cfg.prices);
@@ -233,11 +269,13 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
     }
     s.session = latest.map(|e| {
         let ctx = e.context_tokens();
+        // Les modèles à contexte étendu dépassent 200 k : au-delà de la fenêtre configurée, on suppose 1 M.
+        let window = if ctx > cfg.context_window { cfg.context_window.max(1_000_000) } else { cfg.context_window };
         Session {
-            id: e.session.clone(),
-            model: e.model.clone(),
+            id: e.session.to_string(),
+            model: e.model.to_string(),
             context_tokens: ctx,
-            context_pct: (ctx as f64 / cfg.context_window.max(1) as f64 * 100.0).min(100.0) as f32,
+            context_pct: (ctx as f64 / window.max(1) as f64 * 100.0).min(100.0) as f32,
             last: e.ts,
         }
     });
@@ -250,12 +288,22 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
 pub struct Scanner {
     offsets: HashMap<PathBuf, u64>,
     entries: Vec<Entry>,
-    seen: HashSet<String>,
+    seen: HashSet<u64>,
+    /// Chaînes répétées (modèle, session) partagées entre toutes les entrées.
+    names: HashMap<String, Arc<str>>,
 }
 
 const KEEP_DAYS: i64 = 40;
 
 impl Scanner {
+    fn intern(names: &mut HashMap<String, Arc<str>>, s: Arc<str>) -> Arc<str> {
+        if let Some(a) = names.get(&*s) {
+            return a.clone();
+        }
+        names.insert(s.to_string(), s.clone());
+        s
+    }
+
     fn read_new(&mut self, path: &Path) {
         let Ok(mut file) = std::fs::File::open(path) else { return };
         let len = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -277,8 +325,10 @@ impl Scanner {
                         break; // ligne encore en cours d'écriture : reprise au prochain passage
                     }
                     offset += n as u64;
-                    if let Some(e) = parse_line(&line) {
-                        if e.key.as_ref().is_none_or(|k| self.seen.insert(k.clone())) {
+                    if let Some(mut e) = parse_line(&line) {
+                        if e.key.is_none_or(|k| self.seen.insert(k)) {
+                            e.model = Self::intern(&mut self.names, e.model);
+                            e.session = Self::intern(&mut self.names, e.session);
                             self.entries.push(e);
                         }
                     }
@@ -302,7 +352,7 @@ impl Scanner {
         let cutoff = Utc::now() - Duration::days(KEEP_DAYS);
         if self.entries.iter().any(|e| e.ts < cutoff) {
             self.entries.retain(|e| e.ts >= cutoff);
-            self.seen = self.entries.iter().filter_map(|e| e.key.clone()).collect();
+            self.seen = self.entries.iter().filter_map(|e| e.key).collect();
         }
         let mut s = summarize(&self.entries, cfg, now);
         s.files_scanned = files.len();
@@ -358,7 +408,7 @@ mod tests {
         let e = parse_line(&line("1", "2026-10-15T10:00:00Z", "claude-sonnet-4-5", 10, 20, 30, 40)).unwrap();
         assert_eq!((e.input, e.output, e.cache_write, e.cache_read), (10, 20, 30, 40));
         assert_eq!(e.context_tokens(), 80);
-        assert_eq!(e.key.as_deref(), Some("m-1:r-1"));
+        assert!(e.key.is_some());
     }
 
     #[test]
@@ -423,6 +473,26 @@ mod tests {
         std::fs::write(&file, format!("{}\n", line("1", &ts, "claude-sonnet-4-5", 100, 0, 0, 0))).unwrap();
         assert_eq!(sc.scan(&cfg, now).today.messages, 3);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Mesure sur les vrais logs de la machine : `cargo test -p forge-claude -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_logs_timing() {
+        let cfg = ClaudeConfig::default();
+        let mut sc = Scanner::default();
+        let t = std::time::Instant::now();
+        let s = sc.scan(&cfg, Local::now());
+        println!(
+            "1er passage : {:?}, {} fichiers, {} réponses, mois {:.2} $",
+            t.elapsed(),
+            s.files_scanned,
+            sc.entries.len(),
+            s.month.cost_usd
+        );
+        let t = std::time::Instant::now();
+        sc.scan(&cfg, Local::now());
+        println!("2e passage : {:?}", t.elapsed());
     }
 
     #[test]

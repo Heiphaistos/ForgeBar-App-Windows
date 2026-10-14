@@ -41,6 +41,8 @@ struct Args {
     scene: Option<String>,
     icon_pack: Option<String>,
     all: bool,
+    /// Vignette de galerie : peu de widgets, tous lisibles dans une barre étroite.
+    thumb: bool,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
@@ -54,6 +56,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         scene: None,
         icon_pack: None,
         all: false,
+        thumb: false,
     };
     let mut it = args.iter();
     while let Some(k) = it.next() {
@@ -78,6 +81,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--config" => a.config = Some(val()?),
             "--scene" => a.scene = Some(val()?),
             "--icon-pack" => a.icon_pack = Some(val()?),
+            "--thumb" => a.thumb = true,
             other => return Err(format!("option inconnue : {other}")),
         }
     }
@@ -342,6 +346,13 @@ fn load_config(path: &Option<String>, a: &Args) -> Result<Config, String> {
     }
     if let Some(e) = a.edge {
         s.edge = e;
+    }
+    if a.thumb {
+        let v = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        s.layout.left = v(&["desktop"]);
+        s.layout.center = v(&["claude"]);
+        s.layout.right = v(&["cpu", "wifi", "clock"]);
+        cfg.claude.bar_summary = v(&["context"]);
     }
     Ok(cfg)
 }
