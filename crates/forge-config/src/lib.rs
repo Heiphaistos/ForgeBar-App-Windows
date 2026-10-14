@@ -4,14 +4,17 @@
 //! fenêtre de paramètres l'écrit.
 
 mod color;
+mod condition;
 mod layout;
 mod theme;
 
 pub use color::{parse_color, Rgba};
-pub use layout::{Layout, LayoutPreset, Zones};
+pub use condition::Condition;
+pub use layout::{Layout, LayoutPreset, RowZones, Zones};
 pub use theme::{Backdrop, Background, BackgroundKind, Theme, ThemeColors, ThemeStore};
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,12 +47,30 @@ pub struct General {
     pub autostart: bool,
     /// Masque la barre quand une application passe en plein écran.
     pub hide_on_fullscreen: bool,
+    /// Remplace l'accent du thème par la couleur dominante du fond d'écran.
+    pub accent_from_wallpaper: bool,
+    /// Pack d'icônes SVG : sous-dossier de `%APPDATA%\ForgeBar\icons`, ou `forge` (intégré). Vide = glyphes Segoe.
+    pub icon_pack: String,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { autostart: false, hide_on_fullscreen: true }
+        Self { autostart: false, hide_on_fullscreen: true, accent_from_wallpaper: false, icon_pack: String::new() }
     }
+}
+
+/// Présentation d'un widget numérique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WidgetStyle {
+    #[default]
+    Text,
+    /// Texte avec une jauge fine dessous.
+    Gauge,
+    /// Anneau de progression à côté du texte.
+    Ring,
+    /// Mini-graphe de l'historique des dernières minutes.
+    Graph,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +88,10 @@ pub struct ScreenConfig {
     /// Marge autour de la barre ; au-delà de 0 la barre devient flottante.
     pub margin: u32,
     pub layout: Layout,
+    /// Style par widget : `cpu = "ring"`, `ram = "graph"`…
+    pub styles: BTreeMap<String, WidgetStyle>,
+    /// Affichage conditionnel : `battery = "battery<20"`, `media = "media"`… (voir `Condition`).
+    pub show_when: BTreeMap<String, String>,
 }
 
 impl Default for ScreenConfig {
@@ -81,6 +106,8 @@ impl Default for ScreenConfig {
             thickness: 32,
             margin: 0,
             layout: Layout::default(),
+            styles: BTreeMap::new(),
+            show_when: BTreeMap::new(),
         }
     }
 }
@@ -122,11 +149,48 @@ pub struct Budgets {
     pub monthly_usd: Option<f64>,
 }
 
+/// Estimation de la fenêtre de 5 heures des abonnements Pro / Max, calculée sur les logs locaux.
+/// Aucune API publique ne donne la limite réelle : `five_hour_limit_usd` est un budget que vous fixez.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Subscription {
+    pub enabled: bool,
+    pub five_hour_limit_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Panneau flottant toujours visible, indépendant de la barre.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Floating {
+    pub enabled: bool,
+    pub opacity: f32,
+    /// Les clics traversent le panneau.
+    pub click_through: bool,
+    pub corner: Corner,
+    pub margin: u32,
+}
+
+impl Default for Floating {
+    fn default() -> Self {
+        Self { enabled: false, opacity: 0.85, click_through: true, corner: Corner::TopRight, margin: 16 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClaudeConfig {
     pub enabled: bool,
-    /// `claude_code`, `api`, `subscription`.
+    /// `claude_code` (logs locaux) et `api` (Admin API, clé dans le Gestionnaire d'identification).
     pub sources: Vec<String>,
     /// Ce que la barre affiche : `context`, `tokens_today`, `cost_today`, `cost_week`, `cost_month`.
     pub bar_summary: Vec<String>,
@@ -137,6 +201,10 @@ pub struct ClaudeConfig {
     pub logs_dir: String,
     pub budgets: Budgets,
     pub prices: Vec<Price>,
+    /// Notification Windows quand une alerte ou un budget franchit un seuil.
+    pub notifications: bool,
+    pub subscription: Subscription,
+    pub floating: Floating,
 }
 
 impl Default for ClaudeConfig {
@@ -151,7 +219,58 @@ impl Default for ClaudeConfig {
             logs_dir: String::new(),
             budgets: Budgets::default(),
             prices: default_prices(),
+            notifications: true,
+            subscription: Subscription::default(),
+            floating: Floating::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TempUnit {
+    #[default]
+    Celsius,
+    Fahrenheit,
+}
+
+/// Météo Open-Meteo, sans clé. Renseignez `city` ou `latitude` et `longitude`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Weather {
+    pub enabled: bool,
+    pub city: String,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub unit: TempUnit,
+    pub refresh_minutes: u64,
+}
+
+impl Default for Weather {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            city: String::new(),
+            latitude: None,
+            longitude: None,
+            unit: TempUnit::Celsius,
+            refresh_minutes: 30,
+        }
+    }
+}
+
+/// Historique du presse-papiers, gardé en mémoire uniquement (jamais écrit sur disque).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Clipboard {
+    pub enabled: bool,
+    pub history: usize,
+    pub max_chars: usize,
+}
+
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self { enabled: false, history: 10, max_chars: 60 }
     }
 }
 
@@ -161,11 +280,19 @@ pub struct Config {
     pub general: General,
     pub screen: Vec<ScreenConfig>,
     pub claude: ClaudeConfig,
+    pub weather: Weather,
+    pub clipboard: Clipboard,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { general: General::default(), screen: vec![ScreenConfig::default()], claude: ClaudeConfig::default() }
+        Self {
+            general: General::default(),
+            screen: vec![ScreenConfig::default()],
+            claude: ClaudeConfig::default(),
+            weather: Weather::default(),
+            clipboard: Clipboard::default(),
+        }
     }
 }
 
@@ -208,6 +335,12 @@ impl Config {
                 return Err(ConfigError::Invalid(format!("épaisseur {} hors limites (16 à 96)", s.thickness)));
             }
         }
+        for (w, c) in self.screen.iter().flat_map(|s| s.show_when.iter()) {
+            Condition::parse(c).map_err(|e| ConfigError::Invalid(format!("show_when.{w} : {e}")))?;
+        }
+        if !(0.1..=1.0).contains(&self.claude.floating.opacity) {
+            return Err(ConfigError::Invalid("claude.floating.opacity doit être entre 0,1 et 1".into()));
+        }
         if self.claude.refresh_seconds < 5 {
             return Err(ConfigError::Invalid("claude.refresh_seconds doit valoir au moins 5".into()));
         }
@@ -239,6 +372,9 @@ pub fn app_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".config").join("forgebar")
 }
+
+/// Cible du Gestionnaire d'identification Windows qui porte la clé Admin API d'Anthropic.
+pub const ADMIN_KEY_TARGET: &str = "ForgeBar/AnthropicAdminKey";
 
 pub fn config_path() -> PathBuf {
     app_dir().join("config.toml")
