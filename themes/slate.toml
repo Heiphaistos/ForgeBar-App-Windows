@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "slate"` pour n'en changer que quelques valeurs.
+name = "Ardoise"
+family = "minimal"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 18.0
+
+[background]
+kind = "solid"
+colors = ["#1E293B"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#E2E8F0"
+text_secondary = "#94A3B8"
+accent = "#38BDF8"
+border = ""

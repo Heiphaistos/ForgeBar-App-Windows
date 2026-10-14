@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "plasma"` pour n'en changer que quelques valeurs.
+name = "Plasma"
+family = "neon"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Cascadia Mono"
+mono_family = "Cascadia Mono"
+font_size = 11.5
+spacing = 14.0
+
+[background]
+kind = "linear"
+colors = ["#10002B", "#5A189A", "#9D4EDD"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#F5F5F5"
+text_secondary = "#A8A8B8"
+accent = "#E0AAFF"
+border = ""

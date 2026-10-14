@@ -1,0 +1,10 @@
+[package]
+name = "forge-settings"
+description = "Paramètres de Forge Bar (processus séparé, lancé à la demande)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-config = { path = "../forge-config" }
+toml.workspace = true

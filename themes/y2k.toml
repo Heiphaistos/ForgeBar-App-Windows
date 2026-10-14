@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "y2k"` pour n'en changer que quelques valeurs.
+name = "Années 2000"
+family = "retro"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Tahoma"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "linear"
+colors = ["#245EDC", "#3A81F3", "#245EDC"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#FFFFFF"
+text_secondary = "#DCE8FF"
+accent = "#7CFC00"
+border = ""

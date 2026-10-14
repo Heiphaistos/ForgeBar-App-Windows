@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "lavender"` pour n'en changer que quelques valeurs.
+name = "Lavande"
+family = "gradient"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "linear"
+colors = ["#8E78C8", "#C3A6E8"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#1E1030"
+text_secondary = "#3A2858"
+accent = "#2E1A47"
+border = ""

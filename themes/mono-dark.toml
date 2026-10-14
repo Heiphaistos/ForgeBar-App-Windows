@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "mono-dark"` pour n'en changer que quelques valeurs.
+name = "Mono sombre"
+family = "minimal"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 18.0
+
+[background]
+kind = "solid"
+colors = ["#111111"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#EDEDED"
+text_secondary = "#8A8A8A"
+accent = "#EDEDED"
+border = ""

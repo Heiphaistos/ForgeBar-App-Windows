@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "amber-terminal"` pour n'en changer que quelques valeurs.
+name = "Terminal ambre"
+family = "retro"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Consolas"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#120A00"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#FFB000"
+text_secondary = "#B37B00"
+accent = "#FFB000"
+border = ""

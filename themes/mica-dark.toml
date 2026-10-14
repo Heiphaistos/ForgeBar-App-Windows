@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "mica-dark"` pour n'en changer que quelques valeurs.
+name = "Mica sombre"
+family = "windows"
+backdrop = "mica"
+radius = 0.0
+border_width = 0.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#202020"]
+angle = 0.0
+opacity = 0.35
+
+[colors]
+text = "#FFFFFF"
+text_secondary = "#C5C5C5"
+accent = "#4CC2FF"
+border = ""

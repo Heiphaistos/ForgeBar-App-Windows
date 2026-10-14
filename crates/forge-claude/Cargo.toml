@@ -1,0 +1,11 @@
+[package]
+name = "forge-claude"
+description = "Lecture de la consommation Claude (Claude Code, API, abonnement)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-config = { path = "../forge-config" }
+serde_json.workspace = true
+chrono.workspace = true

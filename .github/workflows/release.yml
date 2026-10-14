@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: i686-pc-windows-msvc
+            arch: x86
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --target ${{ matrix.target }}
+      - run: cargo build --release --workspace --target ${{ matrix.target }}
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "dist/ForgeBar-${{ github.ref_name }}-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/forge-bar.exe, target/${{ matrix.target }}/release/forge-settings.exe $out
+          Copy-Item README.md, LICENSE $out
+          Copy-Item themes $out/themes -Recurse
+          Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zip-${{ matrix.arch }}
+          path: dist/*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/*.zip --repo "${{ github.repository }}" --generate-notes

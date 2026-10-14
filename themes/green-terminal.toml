@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "green-terminal"` pour n'en changer que quelques valeurs.
+name = "Terminal vert"
+family = "retro"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Consolas"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#001100"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#33FF33"
+text_secondary = "#1E9E1E"
+accent = "#33FF33"
+border = ""

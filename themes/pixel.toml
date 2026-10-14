@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "pixel"` pour n'en changer que quelques valeurs.
+name = "Pixel"
+family = "retro"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Consolas"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#1D2B53"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#FFF1E8"
+text_secondary = "#C2C3C7"
+accent = "#FF004D"
+border = ""

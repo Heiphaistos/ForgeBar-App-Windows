@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "catppuccin"` pour n'en changer que quelques valeurs.
+name = "Catppuccin Mocha"
+family = "dev"
+backdrop = "none"
+radius = 0.0
+border_width = 0.0
+font_family = "Cascadia Mono"
+mono_family = "Cascadia Mono"
+font_size = 11.5
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#1E1E2E"]
+angle = 0.0
+opacity = 1.00
+
+[colors]
+text = "#CDD6F4"
+text_secondary = "#BAC2DE"
+accent = "#CBA6F7"
+border = ""
