@@ -9,11 +9,14 @@ use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION, WM_APP
 
 pub const WM_TRAY: u32 = WM_APP + 5;
 
-fn fill<const N: usize>(dst: &mut [u16; N], s: &str) {
-    for (d, c) in dst.iter_mut().zip(s.encode_utf16().chain([0])) {
+/// Texte UTF-16 terminé par un zéro, rempli dans un tableau de taille fixe. Renvoyé par valeur : sur x86
+/// NOTIFYICONDATAW est compacte (alignement 1) et on ne peut pas en emprunter les champs.
+fn wide<const N: usize>(s: &str) -> [u16; N] {
+    let mut out = [0u16; N];
+    for (d, c) in out.iter_mut().zip(s.encode_utf16().take(N - 1)) {
         *d = c;
     }
-    dst[N - 1] = 0;
+    out
 }
 
 fn data(hwnd: HWND) -> NOTIFYICONDATAW {
@@ -26,7 +29,7 @@ fn data(hwnd: HWND) -> NOTIFYICONDATAW {
         hIcon: unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default(),
         ..Default::default()
     };
-    fill(&mut d.szTip, "Forge Bar");
+    d.szTip = wide("Forge Bar");
     d
 }
 
@@ -46,8 +49,8 @@ pub fn remove(hwnd: HWND) {
 pub fn balloon(hwnd: HWND, title: &str, body: &str, critical: bool) {
     let mut d = data(hwnd);
     d.uFlags = NIF_INFO;
-    fill(&mut d.szInfoTitle, title);
-    fill(&mut d.szInfo, body);
+    d.szInfoTitle = wide(title);
+    d.szInfo = wide(body);
     d.dwInfoFlags = if critical { NIIF_ERROR } else { NIIF_WARNING };
     unsafe {
         let _ = Shell_NotifyIconW(NIM_MODIFY, &d);
