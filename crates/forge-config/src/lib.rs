@@ -215,7 +215,7 @@ impl Default for ClaudeConfig {
             sources: vec!["claude_code".into()],
             bar_summary: vec!["context".into(), "cost_today".into()],
             alerts: vec![80, 95],
-            context_window: 200_000,
+            context_window: 1_000_000,
             refresh_seconds: 60,
             logs_dir: String::new(),
             budgets: Budgets::default(),

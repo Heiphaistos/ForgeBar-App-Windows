@@ -259,7 +259,7 @@ pub fn summarize(entries: &[Entry], cfg: &ClaudeConfig, now: DateTime<Local>) ->
             Day { date, cost_usd: t.cost_usd, tokens: t.tokens() }
         })
         .collect();
-    let mut models: Vec<_> = models.into_iter().filter(|(m, _)| !m.is_empty()).collect();
+    let mut models: Vec<_> = models.into_iter().filter(|(m, _)| !m.is_empty() && m != "<synthetic>").collect();
     models.sort_by(|a, b| b.1.cost_usd.total_cmp(&a.1.cost_usd).then(b.1.tokens().cmp(&a.1.tokens())));
     s.models = models;
     if cfg.subscription.enabled {
