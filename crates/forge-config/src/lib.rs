@@ -366,7 +366,10 @@ impl Config {
             Ok(text) => {
                 let mut cfg = Self::from_toml(&text)?;
                 // Les widgets apparus depuis la dernière version sont ajoutés aux dispositions écrites à la main.
-                let migrated = cfg.screen.iter_mut().fold(false, |any, s| s.layout.adopt_new_widgets() || any);
+                let mut migrated = false;
+                for s in cfg.screen.iter_mut() {
+                    migrated |= s.layout.adopt_new_widgets();
+                }
                 if migrated {
                     let _ = std::fs::write(path, cfg.to_toml());
                 }
