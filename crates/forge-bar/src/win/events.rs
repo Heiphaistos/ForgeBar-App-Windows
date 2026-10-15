@@ -27,6 +27,7 @@ const MENU_RELOAD: usize = 12;
 const MENU_QUIT: usize = 13;
 const MENU_HIDE_BAR: usize = 14;
 const MENU_UPDATE: usize = 15;
+const MENU_FPS_ALLOW: usize = 16;
 const MENU_MUTE: usize = 20;
 const MENU_MIXER: usize = 21;
 const MENU_SOUND_SETTINGS: usize = 22;
@@ -250,6 +251,12 @@ fn widget_items(menu: HMENU, id: &str, app: &App) -> bool {
             add(menu, MENU_STORAGE, "Stockage…", none);
             add(menu, MENU_TASKMGR, "Gestionnaire des tâches…", none);
         }
+        "fps" => {
+            if app.sampler.data.fps_denied {
+                add(menu, MENU_FPS_ALLOW, "Autoriser le suivi des FPS (une fois, administrateur)…", none);
+            }
+            add(menu, 0, "Mesure passive : rien n'est injecté dans les jeux", MF_GRAYED);
+        }
         "wifi" => add(menu, MENU_WIFI, "Paramètres Wi-Fi…", none),
         "battery" => add(menu, MENU_BATTERY, "Paramètres de batterie…", none),
         "clock" => {
@@ -317,6 +324,16 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
                 with_app(|app| app.reload(true));
             }
             MENU_QUIT => PostQuitMessage(0),
+            MENU_FPS_ALLOW => {
+                sys::allow_fps();
+                with_app(|app| {
+                    tray::info(
+                        app.main,
+                        "Suivi des FPS",
+                        "Après validation, fermez puis rouvrez votre session Windows : le droit n'est pris en compte qu'à ce moment.",
+                    )
+                });
+            }
             MENU_UPDATE => {
                 with_app(|app| {
                     tray::info(app.main, "Mise à jour", "Recherche en cours…");

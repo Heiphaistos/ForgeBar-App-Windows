@@ -136,6 +136,13 @@ pub struct SysData {
     pub clipboard: Option<Vec<String>>,
     /// Occupation du disque système en pourcentage ; `None` si illisible.
     pub disk: Option<f32>,
+    /// Images par seconde de l'application au premier plan ; `None` sans jeu qui présente des images.
+    pub fps: Option<u32>,
+    /// Le suivi des FPS demande un droit que l'utilisateur n'a pas encore (voir `win::fps`).
+    pub fps_denied: bool,
+    /// Températures en °C : zone thermique ACPI (processeur) et GPU NVIDIA ; `None` si la machine n'en expose pas.
+    pub cpu_temp: Option<f32>,
+    pub gpu_temp: Option<f32>,
     /// Fenêtres ouvertes, dans l'ordre stable de la barre des tâches ; vide si le widget n'est pas utilisé.
     pub apps: Vec<AppWin>,
     pub clock: String,
@@ -253,6 +260,9 @@ pub fn metric(name: &str, sys: &SysData, claude: &Summary) -> Option<f32> {
         "cpu" => Some(sys.cpu),
         "ram" => Some(sys.ram),
         "gpu" => sys.gpu,
+        "fps" => sys.fps.map(|n| n as f32),
+        "cpu_temp" => sys.cpu_temp,
+        "gpu_temp" => sys.gpu_temp,
         "claude" => claude.session.as_ref().map(|s| s.context_pct),
         _ => None,
     }
@@ -318,6 +328,22 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
         "ram" => Some(pct(id, "ram", "RAM", sys.ram, 85.0, 95.0, Some(Series::Ram))),
         "gpu" => Some(pct(id, "gpu", "GPU", sys.gpu?, 85.0, 95.0, Some(Series::Gpu))),
         "disk" => Some(pct(id, "disk", "DSK", sys.disk?, 85.0, 95.0, None)),
+        "fps" => {
+            let (t, short) = match sys.fps {
+                Some(n) => (format!("FPS {n}"), n.to_string()),
+                None => ("FPS —".to_string(), "—".to_string()),
+            };
+            let lvl = if sys.fps.is_some() { Level::Normal } else { Level::Secondary };
+            Some(seg(id, "fps", None, hide(t), hide(short), lvl))
+        }
+        "temp" => {
+            let parts: Vec<(&str, f32)> =
+                [("CPU", sys.cpu_temp), ("GPU", sys.gpu_temp)].into_iter().filter_map(|(n, t)| Some((n, t?))).collect();
+            let hottest = parts.iter().map(|(_, t)| *t).fold(f32::MIN, f32::max);
+            let text = parts.iter().map(|(n, t)| format!("{n} {t:.0}°")).collect::<Vec<_>>().join(" · ");
+            let short = parts.iter().map(|(_, t)| format!("{t:.0}°")).collect::<Vec<_>>().join(" · ");
+            (!parts.is_empty()).then(|| seg(id, "temp", None, hide(text), hide(short), level_for(hottest, 80.0, 90.0)))
+        }
         "toggle" => Some(seg(id, "toggle", Some(glyph::HIDE), String::new(), String::new(), Level::Secondary)),
         "apps" if !sys.apps.is_empty() => Some(seg(id, "apps", None, String::new(), String::new(), Level::Normal)),
         "net" => {
@@ -369,7 +395,7 @@ mod tests {
     fn hides_missing_hardware() {
         let (sys, cfg, s) = (SysData::default(), ClaudeConfig::default(), Summary::default());
         let i = inputs(&sys, &s, &cfg, false);
-        for id in ["battery", "wifi", "gpu", "disk", "apps", "net", "weather", "media", "clipboard"] {
+        for id in ["battery", "wifi", "gpu", "temp", "disk", "apps", "net", "weather", "media", "clipboard"] {
             assert!(build(id, &i).is_none(), "{id}");
         }
         assert!(build("cpu", &i).is_some());

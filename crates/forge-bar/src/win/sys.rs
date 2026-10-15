@@ -4,6 +4,7 @@
 use super::apps::Windows;
 use super::audio::{self, DeviceWatcher, VolumeWatcher};
 use super::metrics::{Gpu, Net};
+use super::thermal::Thermal;
 use crate::widgets::{SysData, Wifi};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{FILETIME, HANDLE, HWND};
@@ -22,7 +23,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
 
 fn ft(f: FILETIME) -> u64 {
     ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64
@@ -58,6 +59,10 @@ pub struct Sampler {
     pub want_net: bool,
     pub want_disk: bool,
     pub want_apps: bool,
+    pub want_temp: bool,
+    /// Mode jeu : une application plein écran est au premier plan, on ne touche plus aux autres fenêtres.
+    pub game_mode: bool,
+    thermal: Thermal,
     windows: Windows,
     ticks: u64,
     pub data: SysData,
@@ -127,7 +132,16 @@ impl Sampler {
         if self.want_disk && self.ticks % 10 == 1 {
             self.data.disk = system_drive_usage();
         }
-        self.data.apps = if self.want_apps { self.windows.list() } else { Vec::new() };
+        self.game_mode = foreground_is_fullscreen();
+        self.data.apps = if self.want_apps && !self.game_mode { self.windows.list() } else { Vec::new() };
+        if self.want_temp && self.ticks % 3 == 1 {
+            (self.data.cpu_temp, self.data.gpu_temp) = self.thermal.sample();
+        }
+        match super::fps::state() {
+            super::fps::STATE_RUNNING => self.data.fps = super::fps::sample(foreground_pid()),
+            super::fps::STATE_DENIED => self.data.fps_denied = true,
+            _ => {}
+        }
         self.data.clock = chrono::Local::now().format("%H:%M").to_string();
         let snapshot = self.data.clone();
         self.data.hist.record(&snapshot);
@@ -279,6 +293,48 @@ fn system_drive_usage() -> Option<f32> {
     (total > 0).then(|| 100.0 * (1.0 - free as f64 / total as f64) as f32)
 }
 
+/// Vrai si la fenêtre au premier plan couvre tout son écran sans cadre (jeu ou vidéo en plein écran).
+/// Lecture de géométrie seulement : aucun message n'est envoyé à cette fenêtre.
+fn foreground_is_fullscreen() -> bool {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect, GWL_STYLE, WS_CAPTION,
+    };
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_invalid() {
+            return false;
+        }
+        let mut class = [0u16; 32];
+        let n = GetClassNameW(fg, &mut class) as usize;
+        if matches!(String::from_utf16_lossy(&class[..n]).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd") {
+            return false;
+        }
+        let mut r = windows::Win32::Foundation::RECT::default();
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if GetWindowRect(fg, &mut r).is_err()
+            || !GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool()
+        {
+            return false;
+        }
+        let m = mi.rcMonitor;
+        let covers = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
+        covers && GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION.0 != WS_CAPTION.0
+    }
+}
+
+/// Processus de la fenêtre au premier plan (lecture de l'identifiant seulement : aucun handle sur le processus).
+fn foreground_pid() -> u32 {
+    let mut pid = 0u32;
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow(),
+            Some(&mut pid),
+        )
+    };
+    pid
+}
+
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -306,6 +362,24 @@ pub fn media_key(code: u16) {
     let k = VIRTUAL_KEY(code);
     let inputs = [key(k, false), key(k, true)];
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+}
+
+/// Ajoute l'utilisateur au groupe « Utilisateurs du journal de performances » (SID S-1-5-32-559), seul droit
+/// nécessaire au suivi des FPS. Demande l'élévation (UAC) une fois ; effectif à la prochaine ouverture de session.
+pub fn allow_fps() {
+    let user = format!(
+        "{}\\{}",
+        std::env::var("USERDOMAIN").unwrap_or_default(),
+        std::env::var("USERNAME").unwrap_or_default()
+    )
+    .replace('\'', "''");
+    let args = format!(
+        "-NoProfile -WindowStyle Hidden -Command \"Add-LocalGroupMember -Group (Get-LocalGroup -SID S-1-5-32-559) -Member '{user}'\""
+    );
+    let wide: Vec<u16> = args.encode_utf16().chain([0]).collect();
+    unsafe {
+        ShellExecuteW(HWND::default(), w!("runas"), w!("powershell.exe"), PCWSTR(wide.as_ptr()), None, SW_HIDE);
+    }
 }
 
 /// Ouvre une URI ou un fichier avec l'application associée.

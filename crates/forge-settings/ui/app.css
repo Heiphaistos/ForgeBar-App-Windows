@@ -13,6 +13,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 "Sego
 header { position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
   padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
 h1 { font-size: 16px; margin: 0; }
+.logo { width: 40px; height: 40px; margin: -4px -4px -4px 0; }
 h2 { font-size: 15px; margin: 0 0 10px; }
 h3 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .spacer { flex: 1; }

@@ -7,8 +7,10 @@ mod bar;
 mod clipboard;
 mod cred;
 mod events;
+mod fps;
 mod http;
 mod icons;
+mod log;
 mod media;
 mod metrics;
 mod panel;
@@ -16,6 +18,7 @@ mod render;
 pub mod snapshot;
 mod speedtest;
 mod sys;
+mod thermal;
 mod tray;
 mod updater;
 mod wallpaper;
@@ -126,6 +129,12 @@ pub(crate) fn warn(msg: String) {
     std::thread::spawn(move || unsafe {
         MessageBoxW(None, &HSTRING::from(msg), w!("Forge Bar"), MB_ICONWARNING);
     });
+}
+
+/// Dernière modification de la configuration ou d'un thème utilisateur : change dès que l'éditeur enregistre.
+fn watch_stamp(config: &std::path::Path) -> Option<SystemTime> {
+    let themes = std::fs::read_dir(user_themes_dir()).into_iter().flatten().flatten().filter_map(|e| mtime(&e.path()));
+    themes.chain(mtime(config)).max()
 }
 
 fn mtime(p: &std::path::Path) -> Option<SystemTime> {
@@ -270,13 +279,17 @@ impl App {
         self.sampler.want_net = layout_uses(&self.cfg, "net");
         self.sampler.want_disk = layout_uses(&self.cfg, "disk");
         self.sampler.want_apps = layout_uses(&self.cfg, "apps");
+        self.sampler.want_temp = layout_uses(&self.cfg, "temp");
+        if layout_uses(&self.cfg, "fps") {
+            fps::start();
+        }
         self.refresh_floating();
         self.invalidate();
     }
 
     pub(crate) fn reload(&mut self, force: bool) {
         let path = config_path();
-        let m = mtime(&path);
+        let m = watch_stamp(&path);
         if !force && m == self.cfg_mtime {
             return;
         }
@@ -419,7 +432,7 @@ pub fn run() -> Result<()> {
         set_autostart(cfg.general.autostart);
         let pack = icons::load(&cfg.general.icon_pack, &d2d);
         let mut app = App {
-            cfg_mtime: mtime(&path),
+            cfg_mtime: watch_stamp(&path),
             themes: ThemeStore::load(Some(&user_themes_dir())),
             icon_font: icon_font(&dwrite),
             accent: cfg.general.accent_from_wallpaper.then(wallpaper::accent).flatten(),
@@ -458,12 +471,13 @@ pub fn run() -> Result<()> {
         app.sampler.want_net = layout_uses(&app.cfg, "net");
         app.sampler.want_disk = layout_uses(&app.cfg, "disk");
         app.sampler.want_apps = layout_uses(&app.cfg, "apps");
+        app.sampler.want_temp = layout_uses(&app.cfg, "temp");
         app.sampler.sample();
         APP.with(|cell| *cell.borrow_mut() = Some(app));
         with_app(|app| app.rebuild());
 
         SetTimer(main, TIMER_TICK, 1000, None);
-        SetTimer(main, TIMER_CONFIG, 2000, None);
+        SetTimer(main, TIMER_CONFIG, 800, None);
         workers::spawn_claude(main, WM_APP_CLAUDE, claude, claude_cfg, claude_wake);
         workers::spawn_weather(main, WM_APP_WEATHER, weather, weather_cfg, weather_wake);
         media::spawn(main, WM_APP_MEDIA, media);
@@ -477,6 +491,7 @@ pub fn run() -> Result<()> {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        fps::stop();
         let _ = UnregisterHotKey(main, HOTKEY_TOGGLE);
         tray::remove(main);
         clipboard::listen(main, false);

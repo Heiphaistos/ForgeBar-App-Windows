@@ -104,6 +104,10 @@ fn demo_sys() -> SysData {
         ram: 62.0,
         gpu: Some(21.0),
         disk: Some(63.0),
+        fps: Some(144),
+        fps_denied: false,
+        cpu_temp: Some(54.0),
+        gpu_temp: Some(68.0),
         apps: ["Explorateur", "Brave", "Terminal", "Discord"]
             .iter()
             .enumerate()

@@ -101,6 +101,9 @@ pub struct ScreenConfig {
     pub styles: BTreeMap<String, WidgetStyle>,
     /// Affichage conditionnel : `battery = "battery<20"`, `media = "media"`… (voir `Condition`).
     pub show_when: BTreeMap<String, String>,
+    /// Décalage en pixels logiques le long de la barre, par widget (`clock = 12`) ou par zone
+    /// (`zone_left`, `zone_center`, `zone_right`) ; négatif = vers le début. Les voisins ne bougent pas.
+    pub offsets: BTreeMap<String, i32>,
 }
 
 impl Default for ScreenConfig {
@@ -117,6 +120,7 @@ impl Default for ScreenConfig {
             layout: Layout::default(),
             styles: BTreeMap::new(),
             show_when: BTreeMap::new(),
+            offsets: BTreeMap::new(),
         }
     }
 }

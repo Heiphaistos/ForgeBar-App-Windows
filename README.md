@@ -102,7 +102,7 @@ enabled = false
 history = 10
 ```
 
-Widgets disponibles : `desktop`, `apps` (miniatures des fenêtres ouvertes), `media`, `claude`, `cpu`, `ram`, `gpu`, `disk` (occupation du disque système), `net`, `weather`, `clipboard`, `wifi`, `sound`, `battery`, `clock`, `toggle` (bouton qui masque la barre). Un widget sans donnée sur la machine (batterie sur un PC fixe, GPU sans compteur) n'apparaît pas. Quand la barre est trop étroite, les widgets les moins importants disparaissent (média, météo, réseau, GPU…) plutôt que de se chevaucher.
+Widgets disponibles : `desktop`, `apps` (miniatures des fenêtres ouvertes), `media`, `claude`, `cpu`, `ram`, `gpu`, `disk` (occupation du disque système), `fps` (images par seconde du jeu au premier plan), `temp` (températures CPU et GPU), `net`, `weather`, `clipboard`, `wifi`, `sound`, `battery`, `clock`, `toggle` (bouton qui masque la barre). Un widget sans donnée sur la machine (batterie sur un PC fixe, GPU sans compteur) n'apparaît pas. Quand la barre est trop étroite, les widgets les moins importants disparaissent (média, météo, réseau, GPU…) plutôt que de se chevaucher.
 
 La grille de prix (`[[claude.prices]]`) est écrite dans le fichier au premier lancement. Vérifiez-la sur la page de tarifs d'Anthropic : le coût affiché n'est qu'une estimation à partir des tokens. Un modèle absent de la grille est compté en tokens, sans coût.
 
@@ -192,3 +192,14 @@ Une fenêtre de messages invisible porte les minuteurs : mesures toutes les seco
 ## Mise à jour automatique (0.6.0)
 
 Au démarrage (après 30 s) puis toutes les 6 h, Forge Bar lit la dernière release GitHub. Si elle est plus récente, il télécharge le MSI de son architecture, **vérifie son SHA-256 contre `SHA256SUMS.txt` de la même release** (refus si différent), l'installe en silence (MSI par utilisateur, sans droits administrateur) puis se relance. Seule la copie installée par le MSI s'installe seule ; une copie de développement ou un zip annonce la version disponible. Menu clic droit : « Rechercher une mise à jour ». Désactivable : `general.auto_update = false`.
+
+## FPS, températures et anti-triche (0.8.0)
+
+Forge Bar est une fenêtre à part : **il n'injecte aucune DLL, ne pose aucun hook, ne charge aucun pilote noyau, n'ouvre aucun handle sur un autre processus et ne lit la mémoire d'aucun jeu**. C'est ce qui le rend compatible avec EAC, BattlEye, Vanguard, FACEIT et consorts. Ce qu'il fait côté système :
+
+- **FPS** : session ETW (suivi d'événements Windows) qui compte les événements « Present » de DXGI et Direct3D 9 de l'application au premier plan, comme PresentMon. Passif. Windows réserve ETW aux administrateurs et au groupe « Utilisateurs du journal de performances » : sans ce droit le widget affiche « FPS — » et le clic droit propose de l'ajouter (une validation administrateur, effective à la prochaine ouverture de session). Vulkan pur n'est pas compté.
+- **Températures** : GPU NVIDIA via `nvml.dll` (la bibliothèque de `nvidia-smi`, dossier système uniquement) ; processeur via les zones thermiques ACPI quand la machine en expose. Aucun pilote de type WinRing0 / LibreHardwareMonitor : ils sont justement bloqués par les anti-triche, on n'en charge jamais.
+- **Mode jeu** : quand une fenêtre plein écran sans cadre est au premier plan, la barre cesse d'interroger les autres fenêtres (miniatures d'applications) et ne leur envoie plus aucun message.
+- Aucune garantie contractuelle n'existe côté éditeurs d'anti-triche ; en cas de doute avec un jeu précis, masquez la barre (Ctrl+Alt+B) ou désactivez les widgets `fps` et `apps`.
+
+Journal : `%APPDATA%\ForgeBar\logsorge-bar.log` (widgets masqués faute de place, etc.). La barre surveille aussi le dossier des thèmes : modifier un thème enregistré s'applique sans toucher à la configuration.

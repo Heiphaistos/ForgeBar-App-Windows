@@ -104,6 +104,8 @@ pub struct Bar {
     pub hits: Vec<(D2D_RECT_F, String)>,
     /// Barre masquée par l'utilisateur (bouton, raccourci ou icône de notification).
     pub off: bool,
+    /// Widgets masqués faute de place à la dernière image (pour ne journaliser que les changements).
+    pub(super) dropped: Vec<String>,
     /// Icônes d'applications converties en bitmaps, valables pour la cible `bitmap_rt`.
     pub(super) bitmaps: HashMap<isize, (isize, ID2D1Bitmap)>,
     pub(super) bitmap_rt: usize,
@@ -125,6 +127,7 @@ impl Bar {
             conds: HashMap::new(),
             hits: Vec::new(),
             off: false,
+            dropped: Vec::new(),
             bitmaps: HashMap::new(),
             bitmap_rt: 0,
         };

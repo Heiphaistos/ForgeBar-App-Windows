@@ -19,6 +19,16 @@ fn wide<const N: usize>(s: &str) -> [u16; N] {
     out
 }
 
+/// Icône 3D de l'application (ressource n° 1 de l'exécutable), à défaut l'icône générique de Windows.
+fn app_icon() -> windows::Win32::UI::WindowsAndMessaging::HICON {
+    unsafe {
+        let module = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap_or_default();
+        LoadIconW(module, windows::core::PCWSTR(std::ptr::without_provenance(1)))
+            .or_else(|_| LoadIconW(None, IDI_APPLICATION))
+            .unwrap_or_default()
+    }
+}
+
 fn data(hwnd: HWND) -> NOTIFYICONDATAW {
     let mut d = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -26,7 +36,7 @@ fn data(hwnd: HWND) -> NOTIFYICONDATAW {
         uID: 1,
         uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
         uCallbackMessage: WM_TRAY,
-        hIcon: unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap_or_default(),
+        hIcon: app_icon(),
         ..Default::default()
     };
     d.szTip = wide("Forge Bar");

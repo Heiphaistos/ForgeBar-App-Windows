@@ -91,7 +91,7 @@ struct Item {
 }
 
 /// Widgets sacrifiés, dans cet ordre, quand la barre est trop étroite pour tout afficher.
-const DROP_ORDER: [&str; 9] = ["media", "apps", "weather", "net", "disk", "gpu", "clipboard", "ram", "cpu"];
+const DROP_ORDER: [&str; 10] = ["media", "weather", "net", "disk", "temp", "gpu", "clipboard", "ram", "cpu", "apps"];
 
 fn zone_total(v: &[Item], gap: f32) -> f32 {
     v.iter().map(|i| i.width).sum::<f32>() + gap * v.len().saturating_sub(1) as f32
@@ -399,8 +399,21 @@ impl Bar {
             groups.push([a, b, c]);
         }
         if !vertical {
+            let ids = |g: &[[Vec<Item>; 3]]| -> Vec<String> {
+                g.iter().flatten().flatten().map(|i| i.seg.id.clone()).collect()
+            };
+            let before = ids(&groups);
             for z in groups.iter_mut() {
                 fit(z, w, gap, 8.0);
+            }
+            // Un widget qui disparaît faute de place doit laisser une trace (journal), pas un mystère.
+            let kept = ids(&groups);
+            let dropped: Vec<String> = before.into_iter().filter(|i| !kept.contains(i)).collect();
+            if dropped != self.dropped {
+                if !dropped.is_empty() {
+                    super::log::info(&format!("barre trop étroite ({w:.0} px) : widgets masqués {dropped:?}"));
+                }
+                self.dropped = dropped;
             }
         }
 
@@ -442,12 +455,15 @@ impl Bar {
                 ]);
                 for (zone, items) in zones.iter().enumerate() {
                     let extent = |it: &Item| if vertical { row_h } else { it.width };
-                    let mut pos = starts[zone];
+                    let shift = |id: &str| self.screen.offsets.get(id).copied().unwrap_or(0) as f32;
+                    let mut pos = starts[zone] + shift(["zone_left", "zone_center", "zone_right"][zone]);
                     for it in items {
+                        // Le décalage d'un widget ne pousse pas ses voisins : `pos` avance sans lui.
+                        let at = pos + shift(&it.seg.id);
                         let cell = if vertical {
-                            D2D_RECT_F { left: 0.0, top: pos, right: w, bottom: pos + row_h }
+                            D2D_RECT_F { left: 0.0, top: at, right: w, bottom: at + row_h }
                         } else {
-                            D2D_RECT_F { left: pos, top: y0, right: pos + it.width, bottom: y0 + row_h }
+                            D2D_RECT_F { left: at, top: y0, right: at + it.width, bottom: y0 + row_h }
                         };
                         if pills {
                             let inset = (row_h * 0.12).max(2.0);

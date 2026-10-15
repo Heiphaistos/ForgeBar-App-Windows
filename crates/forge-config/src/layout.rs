@@ -67,7 +67,9 @@ pub const ALL: &[&str] = &[
     "cpu",
     "ram",
     "gpu",
+    "temp",
     "disk",
+    "fps",
     "net",
     "weather",
     "clipboard",
@@ -92,7 +94,8 @@ impl Layout {
                 left: v(&["desktop", "apps", "media"]),
                 center: v(&["claude"]),
                 right: v(&[
-                    "cpu", "ram", "gpu", "disk", "net", "weather", "wifi", "sound", "battery", "clock", "toggle",
+                    "cpu", "ram", "gpu", "temp", "disk", "fps", "net", "weather", "wifi", "sound", "battery", "clock",
+                    "toggle",
                 ]),
             },
             LayoutPreset::DoubleRow => {

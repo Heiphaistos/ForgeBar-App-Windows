@@ -216,6 +216,12 @@ pub fn check_config(cfg: &Config, theme_ids: &[String]) -> Result<(), String> {
         for (name, z) in [("left", &l.row2.left), ("center", &l.row2.center), ("right", &l.row2.right)] {
             all_widgets(z, &format!("écran {n}, rangée 2, zone {name}"))?;
         }
+        let zones = ["zone_left", "zone_center", "zone_right"];
+        if let Some((k, v)) = s.offsets.iter().find(|(k, v)| {
+            !(ALL_WIDGETS.contains(&k.as_str()) || zones.contains(&k.as_str())) || !(-3000..=3000).contains(*v)
+        }) {
+            return Err(format!("écran {n} : décalage invalide « {k} = {v} » (widget ou zone connue, -3000 à 3000)"));
+        }
         if let Some(w) = s.styles.keys().chain(s.show_when.keys()).find(|k| !ALL_WIDGETS.contains(&k.as_str())) {
             return Err(format!("écran {n} : style ou condition sur un widget inconnu « {w} »"));
         }

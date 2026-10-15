@@ -3,7 +3,7 @@ const ZONES = [['left', 'Gauche'], ['center', 'Centre'], ['right', 'Droite']];
 let L = null; // { hand, rows: [zones, zones|null] }
 let drag = null;
 let wsel = null; // widget sélectionné
-const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', disk: 'Disque', apps: 'Applications ouvertes', toggle: 'Bouton masquer', net: 'Réseau', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
+const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', disk: 'Disque', fps: 'Images par seconde (FPS)', temp: 'Températures', apps: 'Applications ouvertes', toggle: 'Bouton masquer', net: 'Réseau', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
 const wname = (w) => WNAMES[w] || w;
 const PRESET_NAMES = { classic: 'Classique', centered: 'Centré', split: 'Réparti', islands: 'Îlots', compact: 'Compact', hud_first: 'HUD Claude en premier', double_row: 'Deux rangées', custom: 'Personnalisé' };
 
@@ -53,6 +53,15 @@ function zoneEl(title, widgets, row, zone) {
   z.addEventListener('drop', (e) => { e.preventDefault(); z.classList.remove('over'); if (drag) moveWidget(drag, row, zone, row == null ? 0 : dropIndex(z, e)); });
   return z;
 }
+// Décalage en pixels le long de la barre, pour un widget ou une zone (`zone_center`…). 0 = position naturelle.
+function offsetField(key, label) {
+  const s = cfg.screen[sel];
+  s.offsets = s.offsets || {};
+  return fld(label, h('input', {
+    type: 'number', min: -3000, max: 3000, step: 2, value: s.offsets[key] || 0,
+    onchange: (e) => { const v = Math.round(Number(e.target.value) || 0); if (v === 0) delete s.offsets[key]; else s.offsets[key] = v; touch(); },
+  }), 'Négatif : vers le début de la barre.');
+}
 function widgetPanel(w) {
   const s = cfg.screen[sel], err = h('div', { class: 'err' });
   const where = [['', 'Retirer de la barre'], ...L.rows.flatMap((r, ri) => (r ? ZONES.map(([k, n]) => [ri + ':' + k, 'Rangée ' + (ri + 1) + ', ' + n]) : []))];
@@ -73,6 +82,7 @@ function widgetPanel(w) {
     h('div', { class: 'row' },
       fld('Style', selectEl(s.styles[w] || 'text', [['text', 'Texte'], ['gauge', 'Jauge'], ['ring', 'Anneau'], ['graph', 'Mini-graphe']], (v) => { if (v === 'text') delete s.styles[w]; else s.styles[w] = v; touch(); })),
       fld('Afficher seulement si', cond, 'Métriques : ' + S.metrics.join(', ') + '. Vide = toujours.'),
+      offsetField(w, 'Décalage (px)'),
       fld('Emplacement', selectEl(cur, where, (v) => { if (!v) moveWidget(w, null); else { const [r, z] = v.split(':'); moveWidget(w, Number(r), z, 99); } }))),
     err);
 }
@@ -94,6 +104,9 @@ function pageLayout() {
         onchange: (e) => { L.rows[1] = e.target.checked ? { left: [], center: [], right: [] } : null; L.hand = true; layoutCommit(); setTab('layout'); },
       }), 'Deuxième rangée' + (dbl ? ' (imposée par double_row)' : ''))),
     h('p', { class: 'hint' }, 'Glissez les widgets entre les zones. Dès que vous en déplacez un, les zones deviennent personnalisées (elles priment sur le préréglage).')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Placement fin des zones'),
+      h('div', { class: 'row' }, offsetField('zone_left', 'Zone début (px)'), offsetField('zone_center', 'Zone centre (px)'), offsetField('zone_right', 'Zone fin (px)')),
+      h('p', { class: 'hint' }, 'Décale toute une zone, par exemple le HUD Claude pour mieux le centrer. Pour un seul widget : cliquez-le ci-dessous.')),
     L.rows.map((r, i) => (r ? rowBox(r, i) : null)),
     h('div', { class: 'panel' }, pool),
     wsel ? widgetPanel(wsel) : h('p', { class: 'hint' }, 'Cliquez un widget pour régler son style et son affichage conditionnel.')];

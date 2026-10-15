@@ -6,6 +6,9 @@
            Scope="perUser" InstallerVersion="500" Language="1036" Codepage="1252">
     <SummaryInformation Description="Forge Bar : barre d'extension Windows avec HUD Claude" />
     <MediaTemplate EmbedCab="yes" />
+    <!-- Icône de « Applications installées » (les raccourcis prennent celle de l'exécutable). -->
+    <Icon Id="ForgeBarIcon" SourceFile="$(RepoDir)\assets\icon\forge-bar.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ForgeBarIcon" />
     <MajorUpgrade DowngradeErrorMessage="Une version plus récente de Forge Bar est déjà installée." />
 
     <StandardDirectory Id="LocalAppDataFolder">
