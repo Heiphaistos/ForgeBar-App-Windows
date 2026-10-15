@@ -149,17 +149,34 @@ pub fn is_installed_copy(exe: &str) -> bool {
     std::path::Path::new(exe).starts_with(dir)
 }
 
-/// Installe le MSI en silence puis relance la barre : une commande détachée survit à la fermeture de l'appli.
-/// Les exécutables verrouillés sont fermés avant, sinon le MSI ne pourrait pas les remplacer.
+/// Contenu du script d'installation : attend la fermeture de l'appli, ferme les exécutables verrouillés,
+/// installe le MSI en silence, note le code de sortie puis relance la barre.
+fn apply_script(msi: &std::path::Path, exe: &str, log: &std::path::Path) -> String {
+    let lines = [
+        "@echo off".to_string(),
+        "ping -n 3 127.0.0.1 >nul".to_string(),
+        "taskkill /F /IM forge-settings.exe >nul 2>&1".to_string(),
+        format!("msiexec /i \"{}\" /qn /norestart", msi.display()),
+        format!("echo %date% %time% msiexec code %errorlevel% >> \"{}\"", log.display()),
+        format!("start \"\" \"{exe}\""),
+    ];
+    lines.join("\r\n") + "\r\n"
+}
+
+/// Installe le MSI en silence puis relance la barre : un script détaché survit à la fermeture de l'appli.
+/// (Un script plutôt qu'une ligne `cmd /C` : les guillemets imbriqués y sont mal interprétés.)
 pub fn install_and_restart(msi: &std::path::Path, exe: &str) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let script = format!(
-        "ping -n 3 127.0.0.1 >nul & taskkill /F /IM forge-settings.exe >nul 2>&1 & msiexec /i \"{}\" /qn /norestart & start \"\" \"{}\"",
-        msi.display(),
-        exe
-    );
-    let _ = std::process::Command::new("cmd").args(["/C", &script]).creation_flags(CREATE_NO_WINDOW).spawn();
+    let dir = msi.parent().unwrap_or(std::path::Path::new("."));
+    let bat = dir.join("apply.cmd");
+    if std::fs::write(&bat, apply_script(msi, exe, &dir.join("update.log"))).is_err() {
+        return;
+    }
+    let _ = std::process::Command::new("cmd")
+        .raw_arg(format!("/C \"\"{}\"\"", bat.display()))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
 }
 
 #[cfg(test)]
@@ -191,6 +208,15 @@ mod tests {
         assert_eq!(expected_hash(sums, "ForgeBar-0.6.0-x64.msi"), Some("def456".into()));
         assert_eq!(expected_hash(sums, "missing"), None);
         assert_eq!(sha256(b"abc").as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    }
+
+    #[test]
+    fn apply_script_quotes_every_path() {
+        let msi = std::path::Path::new(r"C:\a b\x.msi");
+        let s = apply_script(msi, r"C:\c d\forge-bar.exe", std::path::Path::new(r"C:\a b\u.log"));
+        assert!(s.contains("msiexec /i \"C:\\a b\\x.msi\" /qn"));
+        assert!(s.contains("start \"\" \"C:\\c d\\forge-bar.exe\""));
+        assert!(s.ends_with("\r\n"));
     }
 
     #[test]
