@@ -1,8 +1,9 @@
 //! Dessin d'une barre : fond, widgets, styles (jauge, anneau, mini-graphe), icônes SVG ou glyphes.
 //! Le dessin cible n'importe quelle `ID2D1RenderTarget` : la fenêtre, ou une image pour les aperçus.
 
+use super::apps::{MAX_APPS, SIZE as ICON_PX};
 use super::bar::{Bar, Ctx, Fonts};
-use crate::widgets::{self, Inputs, Level, Segment, Series};
+use crate::widgets::{self, AppWin, Inputs, Level, Segment, Series};
 use forge_config::{BackgroundKind, Rgba, WidgetStyle};
 use windows::core::{Interface, Result, HSTRING};
 use windows::Win32::Graphics::Direct2D::Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT, D2D_SIZE_U};
@@ -11,7 +12,8 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_GRADIENT_STOP, D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE,
+    ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ARC_SEGMENT,
+    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES, D2D1_ARC_SIZE_LARGE,
     D2D1_ARC_SIZE_SMALL, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
     D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1_SWEEP_DIRECTION_CLOCKWISE,
@@ -89,7 +91,7 @@ struct Item {
 }
 
 /// Widgets sacrifiés, dans cet ordre, quand la barre est trop étroite pour tout afficher.
-const DROP_ORDER: [&str; 7] = ["media", "weather", "net", "gpu", "clipboard", "ram", "cpu"];
+const DROP_ORDER: [&str; 9] = ["media", "apps", "weather", "net", "disk", "gpu", "clipboard", "ram", "cpu"];
 
 fn zone_total(v: &[Item], gap: f32) -> f32 {
     v.iter().map(|i| i.width).sum::<f32>() + gap * v.len().saturating_sub(1) as f32
@@ -128,6 +130,15 @@ fn fit(zones: &mut [Vec<Item>; 3], length: f32, gap: f32, edge: f32) {
 const GAP_ICON_TEXT: f32 = 6.0;
 const RING_D: f32 = 16.0;
 const GRAPH_W: f32 = 44.0;
+/// Largeur d'une miniature d'application et taille de son icône.
+const APP_SLOT: f32 = 26.0;
+const APP_ICON: f32 = 18.0;
+
+/// Zone cliquable de la `i`-ième miniature dans la cellule du widget « apps ».
+fn app_slot(cell: D2D_RECT_F, pad: f32, i: usize) -> D2D_RECT_F {
+    let left = cell.left + pad + i as f32 * APP_SLOT;
+    D2D_RECT_F { left, top: cell.top, right: left + APP_SLOT, bottom: cell.bottom }
+}
 
 impl Bar {
     pub(super) fn ensure_target(&mut self, d2d: &ID2D1Factory) -> Result<()> {
@@ -207,6 +218,35 @@ impl Bar {
         }
     }
 
+    /// Bitmaps Direct2D des icônes d'applications, recréés si la cible de dessin change
+    /// (un bitmap n'est utilisable que sur la cible qui l'a créé).
+    fn sync_bitmaps(&mut self, rt: &ID2D1RenderTarget, apps: &[AppWin]) {
+        let raw = rt.as_raw() as usize;
+        if self.bitmap_rt != raw {
+            self.bitmaps.clear();
+            self.bitmap_rt = raw;
+        }
+        self.bitmaps.retain(|h, _| apps.iter().any(|a| a.hwnd == *h));
+        for a in apps {
+            let Some((key, px)) = &a.icon else { continue };
+            if self.bitmaps.get(&a.hwnd).is_some_and(|(k, _)| k == key) {
+                continue;
+            }
+            let props = D2D1_BITMAP_PROPERTIES {
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+            };
+            let size = D2D_SIZE_U { width: ICON_PX as u32, height: ICON_PX as u32 };
+            if let Ok(b) = unsafe { rt.CreateBitmap(size, Some(px.as_ptr() as *const _), size.width * 4, &props) } {
+                self.bitmaps.insert(a.hwnd, (*key, b));
+            }
+        }
+    }
+
     /// Dessin sur la fenêtre. Ne coûte rien entre deux changements de données.
     pub fn paint(&mut self, ctx: &Ctx) -> Result<()> {
         self.ensure_target(ctx.d2d)?;
@@ -247,6 +287,15 @@ impl Bar {
                 }
             }
             let Some(seg) = widgets::build(id, &inputs) else { continue };
+            if seg.id == "apps" {
+                // Rangée de miniatures : seulement sur une barre horizontale.
+                if !self.screen.edge.is_vertical() {
+                    let width = pad * 2.0 + ctx.sys.apps.len().min(MAX_APPS) as f32 * APP_SLOT;
+                    let (style, icon, caption) = (WidgetStyle::Text, IconKind::None, String::new());
+                    out.push(Item { seg, style, icon, caption, text: None, width });
+                }
+                continue;
+            }
             let style = match self.screen.styles.get(id).copied().unwrap_or_default() {
                 WidgetStyle::Gauge | WidgetStyle::Ring if seg.value.is_none() => WidgetStyle::Text,
                 WidgetStyle::Graph if seg.series.is_none() => WidgetStyle::Text,
@@ -355,6 +404,9 @@ impl Bar {
             }
         }
 
+        if groups.iter().flatten().flatten().any(|i| i.seg.id == "apps") {
+            self.sync_bitmaps(rt, &ctx.sys.apps);
+        }
         unsafe {
             let full = D2D_RECT_F { left: 0.0, top: 0.0, right: w, bottom: h };
             let radius = self.theme.radius;
@@ -418,7 +470,13 @@ impl Bar {
                             rt.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect: pill, radiusX: r, radiusY: r }, &bg);
                         }
                         self.draw_item(rt, ctx, it, cell, pad, stack)?;
-                        self.hits.push((cell, it.seg.id.clone()));
+                        if it.seg.id == "apps" {
+                            for (i, a) in ctx.sys.apps.iter().take(MAX_APPS).enumerate() {
+                                self.hits.push((app_slot(cell, pad, i), format!("app:{}", a.hwnd)));
+                            }
+                        } else {
+                            self.hits.push((cell, it.seg.id.clone()));
+                        }
                         pos += extent(it) + gap;
                     }
                 }
@@ -441,6 +499,32 @@ impl Bar {
         let fonts = self.fonts.as_ref().expect("polices créées");
         let (cw, ch) = (cell.right - cell.left, cell.bottom - cell.top);
         let cy = cell.top + ch / 2.0;
+        if it.seg.id == "apps" {
+            let hi = rt.CreateSolidColorBrush(&color(self.theme.accent().with_alpha(0.3)), None)?;
+            for (i, app) in ctx.sys.apps.iter().take(MAX_APPS).enumerate() {
+                let slot = app_slot(cell, pad, i);
+                let x = slot.left + (APP_SLOT - APP_ICON) / 2.0;
+                if app.active {
+                    let rect = D2D_RECT_F {
+                        left: slot.left + 1.0,
+                        top: cy - APP_SLOT / 2.0,
+                        right: slot.right - 1.0,
+                        bottom: cy + APP_SLOT / 2.0,
+                    };
+                    rt.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect, radiusX: 5.0, radiusY: 5.0 }, &hi);
+                }
+                if let Some((_, b)) = self.bitmaps.get(&app.hwnd) {
+                    let dest = D2D_RECT_F { left: x, top: cy - APP_ICON / 2.0, right: x + APP_ICON, bottom: cy + APP_ICON / 2.0 };
+                    rt.DrawBitmap(b, Some(&dest), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
+                } else {
+                    // Pas d'icône exploitable : initiale de la fenêtre.
+                    let letter: String = app.title.chars().next().into_iter().flat_map(char::to_uppercase).collect();
+                    let (l, _) = text_layout(ctx.dwrite, &letter, &fonts.small, APP_SLOT, ch)?;
+                    rt.DrawTextLayout(D2D_POINT_2F { x: slot.left, y: cell.top }, &l, &brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
+            }
+            return Ok(());
+        }
         if stack {
             // Légende (ou icône) en haut, valeur dessous, le tout centré dans la barre.
             match &it.icon {

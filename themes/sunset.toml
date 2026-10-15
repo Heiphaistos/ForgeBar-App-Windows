@@ -1,7 +1,7 @@
 # Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
 # ou créez un fichier avec `extends = "sunset"` pour n'en changer que quelques valeurs.
-name = "Sunset"
-family = "gradient"
+name = "Crépuscule"
+family = "Dégradés"
 backdrop = "none"
 radius = 0.0
 border_width = 0.0

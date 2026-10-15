@@ -1,0 +1,24 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "auto-windows"` pour n'en changer que quelques valeurs.
+name = "Windows automatique"
+family = "Adaptatif"
+backdrop = "acrylic"
+radius = 14.0
+border_width = 1.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+adaptive = "system"
+
+[background]
+kind = "solid"
+colors = ["#202020"]
+angle = 0.0
+opacity = 0.55
+
+[colors]
+text = "#FFFFFF"
+text_secondary = "#FFFFFFB3"
+accent = "#4CC2FF"
+border = "#FFFFFF29"

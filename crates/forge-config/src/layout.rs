@@ -61,11 +61,13 @@ fn v(items: &[&str]) -> Vec<String> {
 
 pub const ALL: &[&str] = &[
     "desktop",
+    "apps",
     "media",
     "claude",
     "cpu",
     "ram",
     "gpu",
+    "disk",
     "net",
     "weather",
     "clipboard",
@@ -73,6 +75,7 @@ pub const ALL: &[&str] = &[
     "sound",
     "battery",
     "clock",
+    "toggle",
 ];
 
 impl Layout {
@@ -86,9 +89,9 @@ impl Layout {
             LayoutPreset::Classic | LayoutPreset::Compact => Zones { left: v(ALL), ..Zones::default() },
             LayoutPreset::Centered => Zones { center: v(ALL), ..Zones::default() },
             LayoutPreset::Split | LayoutPreset::Islands => Zones {
-                left: v(&["desktop", "media"]),
+                left: v(&["desktop", "apps", "media"]),
                 center: v(&["claude"]),
-                right: v(&["cpu", "ram", "gpu", "net", "weather", "wifi", "sound", "battery", "clock"]),
+                right: v(&["cpu", "ram", "gpu", "disk", "net", "weather", "wifi", "sound", "battery", "clock", "toggle"]),
             },
             LayoutPreset::DoubleRow => {
                 Zones { left: v(&["desktop"]), center: v(&["claude"]), right: v(&["cpu", "ram", "gpu", "clock"]) }

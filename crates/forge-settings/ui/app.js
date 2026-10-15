@@ -8,6 +8,10 @@ let cfg = null; // configuration en cours d'édition
 let sel = 0; // écran édité
 let dirty = false;
 let tab = 'themes';
+let live = true; // chaque changement est enregistré aussitôt : la vraie barre sert d'aperçu
+try { live = localStorage.getItem('live') !== '0'; } catch { /* stockage indisponible */ }
+let orig = null; // configuration à l'ouverture, pour « Rétablir »
+let liveTimer = 0;
 let gen = 0; // invalide les aperçus d'une page quittée
 
 function h(tag, attrs, ...kids) {
@@ -53,6 +57,7 @@ function msg(text, kind) {
 function touch() {
   dirty = true;
   $('#save').disabled = false;
+  if (live) { clearTimeout(liveTimer); liveTimer = setTimeout(saveConfig, 350); }
 }
 
 // ---------- champs génériques ----------
@@ -182,6 +187,7 @@ async function refreshState() { S = await api('/api/state'); }
 async function load() {
   await refreshState();
   cfg = clone(S.config);
+  orig = clone(S.config);
   sel = Math.min(sel, cfg.screen.length - 1);
   if (S.config_error) msg('Configuration illisible, valeurs par défaut affichées : ' + S.config_error, 'bad');
 }
@@ -224,7 +230,7 @@ function pageThemes() {
     onclick: (e) => { famFilter = f; chips.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', c === e.target)); draw(); },
   }, f)));
   draw();
-  return [h('p', { class: 'hint' }, 'Cliquez un thème pour l\'appliquer à l\'écran sélectionné, puis Enregistrer. ' + (S.can_preview ? '' : 'forge-bar introuvable à côté de forge-settings : aperçus approximatifs.')), chips, grid];
+  return [h('p', { class: 'hint' }, 'Cliquez un thème : il s\'applique tout de suite à la vraie barre (aperçu en direct, désactivable en haut). ' + (S.can_preview ? '' : 'forge-bar introuvable à côté de forge-settings : aperçus approximatifs.')), chips, grid];
 }
 
 // ---------- page : éditeur de thème ----------
@@ -340,7 +346,7 @@ function pageEditor() {
     h('div', { class: 'row' }, num(v, 'radius', 'Rayon (px)', { min: 0, max: 48, cb: edChanged }), num(v, 'border_width', 'Bordure (px)', { min: 0, max: 16, step: 0.5, cb: edChanged }),
       num(v, 'font_size', 'Taille de police', { min: 6, max: 48, step: 0.5, cb: edChanged }), num(v, 'spacing', 'Espacement', { min: 0, max: 64, cb: edChanged })),
     h('div', { class: 'row' }, txt(v, 'font_family', 'Police', { cb: edChanged }), txt(v, 'mono_family', 'Police à chasse fixe', { cb: edChanged }),
-      pick(v, 'backdrop', 'Matériau (Windows 11)', ['none', 'mica', 'acrylic', 'tabbed'], edChanged)));
+      pick(v, 'backdrop', 'Matériau (Windows 11)', [['none', 'Aucun'], ['mica', 'Mica'], ['acrylic', 'Acrylique (verre dépoli)'], ['tabbed', 'Mica foncé']], edChanged)));
   const side = h('div', {}, h('div', { class: 'panel' }, h('h2', {}, 'Aperçu'), h('div', { id: 'edpv', class: 'bigpv' }, fallbackPreview(v)),
     h('p', { id: 'edmsg', class: 'err' }),
     h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => saveTheme(false) }, 'Enregistrer le thème'),

@@ -3,8 +3,9 @@
 use super::bar::{Ctx, WM_APPBAR};
 use super::panel::{Kind, Panel};
 use super::{
-    clipboard, sys, tray, wallpaper, with_app, App, TIMER_AUTOHIDE, TIMER_CONFIG, TIMER_TICK, WM_APP_AUDIO,
-    WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD, WM_APP_WEATHER,
+    apps, clipboard, speedtest, sys, tray, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE, TIMER_CONFIG,
+    TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD, WM_APP_SPEED,
+    WM_APP_WEATHER,
 };
 use crate::calendar;
 use crate::content::{self, Action};
@@ -18,11 +19,33 @@ use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const WM_CLIPBOARDUPDATE: u32 = 0x031D;
+const WM_HOTKEY: u32 = 0x0312;
 const SPI_SETDESKWALLPAPER: usize = 0x14;
 const MENU_SETTINGS: usize = 10;
 const MENU_THEMES: usize = 11;
 const MENU_RELOAD: usize = 12;
 const MENU_QUIT: usize = 13;
+const MENU_HIDE_BAR: usize = 14;
+const MENU_MUTE: usize = 20;
+const MENU_MIXER: usize = 21;
+const MENU_SOUND_SETTINGS: usize = 22;
+const MENU_SPEED: usize = 30;
+const MENU_NET_SETTINGS: usize = 31;
+const MENU_TASKMGR: usize = 40;
+const MENU_STORAGE: usize = 41;
+const MENU_WIFI: usize = 42;
+const MENU_BATTERY: usize = 43;
+const MENU_DATETIME: usize = 44;
+const MENU_CALENDAR: usize = 45;
+const MENU_CLAUDE: usize = 46;
+const MENU_PREV: usize = 50;
+const MENU_PLAY: usize = 51;
+const MENU_NEXT: usize = 52;
+const MENU_APP_OPEN: usize = 60;
+const MENU_APP_MINIMIZE: usize = 61;
+const MENU_APP_CLOSE: usize = 62;
+/// 11 paliers de volume : 100 + 0 à 10 pour 0 à 100 %.
+const MENU_VOLUME: usize = 100;
 
 fn bar_index(app: &App, hwnd: HWND) -> Option<usize> {
     app.bars.iter().position(|b| b.hwnd == hwnd)
@@ -103,10 +126,7 @@ impl App {
         let scene = content::floating(&self.claude.lock().unwrap(), &self.cfg.claude);
         let Some(mon) = super::monitors().into_iter().next() else { return };
         if self.floating.is_none() {
-            let mut theme = self.themes.get(&self.cfg.screen[0].theme);
-            if let Some(a) = self.accent {
-                theme.colors.accent = crate::dominant::hex(a);
-            }
+            let theme = self.theme_for(&self.cfg.screen[0].theme);
             let mut dpi = (96u32, 96u32);
             unsafe {
                 let _ = windows::Win32::UI::HiDpi::GetDpiForMonitor(
@@ -147,13 +167,22 @@ impl App {
 fn click(hwnd: HWND, x: i32, y: i32) {
     let hit = with_app(|app| bar_index(app, hwnd).map(|i| (i, app.bars[i].hit(x, y)))).flatten();
     let Some((i, Some(id))) = hit else { return };
+    if let Some(h) = id.strip_prefix("app:").and_then(|h| h.parse().ok()) {
+        apps::activate(h);
+        return;
+    }
     match id.as_str() {
         "desktop" => sys::toggle_desktop(),
         "wifi" => sys::open(w!("ms-settings:network-wifi")),
         "net" => sys::open(w!("ms-settings:network-status")),
         "battery" => sys::open(w!("ms-settings:batterysaver")),
         "cpu" | "ram" | "gpu" => sys::open(w!("taskmgr.exe")),
-        "media" => sys::media_play_pause(),
+        "disk" => sys::open(w!("ms-settings:storagesense")),
+        "media" => sys::media_key(0xB3),
+        "toggle" => {
+            with_app(|app| app.toggle_bars());
+            return;
+        }
         "sound" => {
             with_app(|app| app.sampler.toggle_mute());
         }
@@ -171,21 +200,111 @@ fn click(hwnd: HWND, x: i32, y: i32) {
     with_app(|app| app.invalidate());
 }
 
-fn context_menu(hwnd: HWND) {
+fn add(menu: HMENU, id: usize, text: &str, flags: MENU_ITEM_FLAGS) {
+    unsafe {
+        let _ = AppendMenuW(menu, MF_STRING | flags, id, &HSTRING::from(text));
+    }
+}
+
+fn separator(menu: HMENU) {
+    unsafe {
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+    }
+}
+
+/// Entrées propres au widget sous la souris. Renvoie vrai s'il y en a (un séparateur suit alors).
+fn widget_items(menu: HMENU, id: &str, app: &App) -> bool {
+    let none = MENU_ITEM_FLAGS(0);
+    match id {
+        "sound" => {
+            let Some((v, muted)) = app.sampler.data.volume else { return false };
+            add(menu, MENU_MUTE, if muted { "Réactiver le son" } else { "Couper le son" }, none);
+            if let Ok(sub) = unsafe { CreatePopupMenu() } {
+                let level = (v * 10.0).round() as usize;
+                for step in 0..=10usize {
+                    let flags = if step == level && !muted { MF_CHECKED } else { none };
+                    add(sub, MENU_VOLUME + step, &format!("{} %", step * 10), flags);
+                }
+                unsafe {
+                    let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from("Volume"));
+                }
+            }
+            add(menu, MENU_MIXER, "Mélangeur de volume…", none);
+            add(menu, MENU_SOUND_SETTINGS, "Paramètres du son…", none);
+        }
+        "net" => {
+            let running = app.speed.running.load(std::sync::atomic::Ordering::Relaxed);
+            if running {
+                add(menu, MENU_SPEED, "Test de débit en cours…", MF_GRAYED);
+            } else {
+                add(menu, MENU_SPEED, "Test de débit", none);
+            }
+            if let Some(last) = &app.speed_last {
+                add(menu, 0, &format!("Dernier test : {last}"), MF_GRAYED);
+            }
+            add(menu, MENU_NET_SETTINGS, "Paramètres réseau…", none);
+        }
+        "cpu" | "ram" | "gpu" => add(menu, MENU_TASKMGR, "Gestionnaire des tâches…", none),
+        "disk" => {
+            add(menu, MENU_STORAGE, "Stockage…", none);
+            add(menu, MENU_TASKMGR, "Gestionnaire des tâches…", none);
+        }
+        "wifi" => add(menu, MENU_WIFI, "Paramètres Wi-Fi…", none),
+        "battery" => add(menu, MENU_BATTERY, "Paramètres de batterie…", none),
+        "clock" => {
+            add(menu, MENU_CALENDAR, "Afficher le calendrier", none);
+            add(menu, MENU_DATETIME, "Date et heure…", none);
+        }
+        "claude" => add(menu, MENU_CLAUDE, "Afficher le détail Claude", none),
+        "media" => {
+            add(menu, MENU_PREV, "Piste précédente", none);
+            add(menu, MENU_PLAY, "Lecture / Pause", none);
+            add(menu, MENU_NEXT, "Piste suivante", none);
+        }
+        a if a.starts_with("app:") => {
+            let title = app
+                .sampler
+                .data
+                .apps
+                .iter()
+                .find(|w| format!("app:{}", w.hwnd) == a)
+                .map_or(String::new(), |w| crate::widgets::truncate(&w.title, 40));
+            add(menu, 0, &title, MF_GRAYED);
+            add(menu, MENU_APP_OPEN, "Afficher", none);
+            add(menu, MENU_APP_MINIMIZE, "Réduire", none);
+            add(menu, MENU_APP_CLOSE, "Fermer la fenêtre", none);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Menu contextuel : entrées du widget sous la souris, puis réglages de la barre.
+fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS, w!("Paramètres"));
-        let _ = AppendMenuW(menu, MF_STRING, MENU_THEMES, w!("Dossier des thèmes"));
-        let _ = AppendMenuW(menu, MF_STRING, MENU_RELOAD, w!("Recharger"));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        let _ = AppendMenuW(menu, MF_STRING, MENU_QUIT, w!("Quitter Forge Bar"));
+        let target = widget.as_deref().unwrap_or("");
+        if with_app(|app| widget_items(menu, target, app)).unwrap_or(false) {
+            separator(menu);
+        }
+        let none = MENU_ITEM_FLAGS(0);
+        let off = with_app(|app| app.bars_off).unwrap_or(false);
+        let hide = if off { "Afficher la barre   Ctrl+Alt+B" } else { "Masquer la barre   Ctrl+Alt+B" };
+        add(menu, MENU_HIDE_BAR, hide, none);
+        add(menu, MENU_SETTINGS, "Personnaliser la barre…", none);
+        add(menu, MENU_THEMES, "Dossier des thèmes", none);
+        add(menu, MENU_RELOAD, "Recharger", none);
+        separator(menu);
+        add(menu, MENU_QUIT, "Quitter Forge Bar", none);
         let mut p = POINT::default();
         let _ = GetCursorPos(&mut p);
         let _ = SetForegroundWindow(hwnd);
         let cmd =
             TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, p.x, p.y, 0, hwnd, None).0 as usize;
         let _ = DestroyMenu(menu);
+        let app_hwnd = target.strip_prefix("app:").and_then(|h| h.parse::<isize>().ok());
         match cmd {
+            0 => {}
             MENU_SETTINGS => open_settings(),
             MENU_THEMES => {
                 let dir = user_themes_dir();
@@ -196,8 +315,50 @@ fn context_menu(hwnd: HWND) {
                 with_app(|app| app.reload(true));
             }
             MENU_QUIT => PostQuitMessage(0),
+            MENU_HIDE_BAR => {
+                with_app(|app| app.toggle_bars());
+            }
+            MENU_MUTE => {
+                with_app(|app| app.sampler.toggle_mute());
+            }
+            c if (MENU_VOLUME..=MENU_VOLUME + 10).contains(&c) => {
+                with_app(|app| app.sampler.set_volume((c - MENU_VOLUME) as f32 / 10.0));
+            }
+            MENU_MIXER => sys::open(w!("ms-settings:apps-volume")),
+            MENU_SOUND_SETTINGS => sys::open(w!("ms-settings:sound")),
+            MENU_SPEED => {
+                with_app(|app| {
+                    tray::info(app.main, "Test de débit", "Mesure en cours, environ 20 secondes…");
+                    speedtest::spawn(app.main, WM_APP_SPEED, &app.speed);
+                });
+            }
+            MENU_NET_SETTINGS => sys::open(w!("ms-settings:network-status")),
+            MENU_TASKMGR => sys::open(w!("taskmgr.exe")),
+            MENU_STORAGE => sys::open(w!("ms-settings:storagesense")),
+            MENU_WIFI => sys::open(w!("ms-settings:network-wifi")),
+            MENU_BATTERY => sys::open(w!("ms-settings:batterysaver")),
+            MENU_DATETIME => sys::open(w!("ms-settings:dateandtime")),
+            MENU_CALENDAR | MENU_CLAUDE => {
+                let kind = if cmd == MENU_CALENDAR { Kind::Calendar } else { Kind::Claude };
+                if let Some(i) = bar {
+                    with_app(|app| app.toggle_popup(i, kind));
+                }
+            }
+            MENU_PREV => sys::media_key(0xB1),
+            MENU_PLAY => sys::media_key(0xB3),
+            MENU_NEXT => sys::media_key(0xB0),
+            MENU_APP_OPEN | MENU_APP_MINIMIZE | MENU_APP_CLOSE => {
+                if let Some(h) = app_hwnd {
+                    match cmd {
+                        MENU_APP_OPEN => apps::activate(h),
+                        MENU_APP_MINIMIZE => apps::minimize(h),
+                        _ => apps::close(h),
+                    }
+                }
+            }
             _ => {}
         }
+        with_app(|app| app.invalidate());
     }
 }
 
@@ -227,7 +388,10 @@ pub(super) unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, 
             LRESULT(0)
         }
         WM_RBUTTONUP => {
-            context_menu(hwnd);
+            let (x, y) = lparam_point(lp);
+            let hit = with_app(|app| bar_index(app, hwnd).map(|i| (i, app.bars[i].hit(x, y)))).flatten();
+            let (bar, widget) = hit.map_or((None, None), |(i, w)| (Some(i), w));
+            context_menu(hwnd, bar, widget);
             LRESULT(0)
         }
         WM_MOUSEWHEEL => {
@@ -278,6 +442,15 @@ pub(super) unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, 
         WM_SETTINGCHANGE => {
             // Seul le changement de fond d'écran nous concerne (accent). Les changements de zone de travail
             // viennent de nos propres barres : les traiter ici bouclerait.
+            // Mode clair/sombre ou couleur d'accentuation de Windows changés : les thèmes adaptatifs se recalculent.
+            let colors = !PCWSTR(lp.0 as *const u16).is_null()
+                && lp.0 != 0
+                && unsafe { PCWSTR(lp.0 as *const u16).to_string() }.is_ok_and(|s| s == "ImmersiveColorSet");
+            if colors {
+                with_app(|app| {
+                    let _ = PostMessageW(app.main, WM_APP_REBUILD, WPARAM(0), LPARAM(0));
+                });
+            }
             if wp.0 == SPI_SETDESKWALLPAPER {
                 with_app(|app| {
                     let _ = PostMessageW(app.main, WM_APP_REBUILD, wp, LPARAM(0));
@@ -364,7 +537,7 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
     match msg {
         WM_TIMER => {
             with_app(|app| match wp.0 {
-                TIMER_TICK if app.bars.iter().any(|b| !b.hidden) => {
+                TIMER_TICK if !app.bars_off && app.bars.iter().any(|b| !b.hidden) => {
                     app.sync_shared();
                     app.sampler.sample();
                     app.invalidate();
@@ -422,9 +595,31 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
             with_app(|app| app.on_clipboard_changed());
             LRESULT(0)
         }
+        WM_HOTKEY if wp.0 as i32 == HOTKEY_TOGGLE => {
+            with_app(|app| app.toggle_bars());
+            LRESULT(0)
+        }
+        WM_APP_SPEED => {
+            with_app(|app| {
+                let result = app.speed.result.lock().unwrap().take();
+                match result {
+                    Some(Ok(text)) => {
+                        tray::info(app.main, "Test de débit", &text);
+                        app.speed_last = Some(text);
+                    }
+                    Some(Err(e)) => tray::balloon(app.main, "Test de débit", &format!("Échec : {e}"), true),
+                    None => {}
+                }
+            });
+            LRESULT(0)
+        }
         tray::WM_TRAY => {
-            if (lp.0 & 0xFFFF) as u32 == WM_RBUTTONUP {
-                context_menu(hwnd);
+            match (lp.0 & 0xFFFF) as u32 {
+                WM_RBUTTONUP => context_menu(hwnd, None, None),
+                WM_LBUTTONUP => {
+                    with_app(|app| app.toggle_bars());
+                }
+                _ => {}
             }
             LRESULT(0)
         }

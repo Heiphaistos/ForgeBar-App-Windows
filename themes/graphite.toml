@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "graphite"` pour n'en changer que quelques valeurs.
+name = "Graphite"
+family = "Moderne"
+backdrop = "acrylic"
+radius = 14.0
+border_width = 1.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#26282C"]
+angle = 0.0
+opacity = 0.62
+
+[colors]
+text = "#F4F5F7"
+text_secondary = "#F4F5F7B3"
+accent = "#7DD3FC"
+border = "#FFFFFF22"

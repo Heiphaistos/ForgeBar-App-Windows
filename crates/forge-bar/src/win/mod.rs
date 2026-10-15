@@ -1,6 +1,7 @@
 //! Application Windows : une fenêtre de messages invisible porte les minuteurs,
 //! une fenêtre de barre par écran configuré, des panneaux à la demande.
 
+mod apps;
 mod audio;
 mod bar;
 mod clipboard;
@@ -13,6 +14,7 @@ mod metrics;
 mod panel;
 mod render;
 pub mod snapshot;
+mod speedtest;
 mod sys;
 mod tray;
 mod wallpaper;
@@ -42,6 +44,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{
     GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub(crate) const WM_APP_CLAUDE: u32 = WM_APP + 2;
@@ -50,6 +53,8 @@ pub(crate) const WM_APP_AUDIO: u32 = WM_APP + 4;
 pub(crate) const WM_APP_MEDIA: u32 = WM_APP + 6;
 pub(crate) const WM_APP_WEATHER: u32 = WM_APP + 7;
 pub(crate) const WM_APP_CLOSE_PANEL: u32 = WM_APP + 8;
+pub(crate) const WM_APP_SPEED: u32 = WM_APP + 9;
+pub(crate) const HOTKEY_TOGGLE: i32 = 1;
 pub(crate) const TIMER_TICK: usize = 1;
 pub(crate) const TIMER_CONFIG: usize = 2;
 pub(crate) const TIMER_AUTOHIDE: usize = 3;
@@ -88,6 +93,11 @@ pub(crate) struct App {
     pub clipboard: Vec<String>,
     pub clipboard_listening: bool,
     pub notifier: Notifier,
+    /// Barres masquées par l'utilisateur ; reste vrai à travers les reconstructions.
+    pub bars_off: bool,
+    pub speed: speedtest::Shared,
+    /// Dernier résultat du test de débit, affiché dans le menu du widget réseau.
+    pub speed_last: Option<String>,
 }
 
 thread_local! {
@@ -183,6 +193,19 @@ fn layout_uses(cfg: &Config, id: &str) -> bool {
 }
 
 impl App {
+    /// Thème prêt à dessiner : adaptatif résolu selon Windows, sinon accent du fond d'écran si demandé.
+    pub(crate) fn theme_for(&self, id: &str) -> forge_config::Theme {
+        let mut theme = self.themes.get(id);
+        if theme.adaptive != forge_config::Adaptive::None {
+            let wallpaper = theme.adaptive == forge_config::Adaptive::Wallpaper;
+            return theme.adapted(&wallpaper::env(wallpaper));
+        }
+        if let Some(a) = self.accent {
+            theme.colors.accent = crate::dominant::hex(a);
+        }
+        theme
+    }
+
     pub(crate) fn rebuild(&mut self) {
         self.close_popup();
         for mut b in self.bars.drain(..) {
@@ -222,11 +245,9 @@ impl App {
                 )
             };
             let Ok(hwnd) = hwnd else { continue };
-            let mut theme = self.themes.get(&screen.theme);
-            if let Some(a) = self.accent {
-                theme.colors.accent = crate::dominant::hex(a);
-            }
+            let theme = self.theme_for(&screen.theme);
             let mut bar = Bar::new(hwnd, screen, theme, mon.rect, dx);
+            bar.off = self.bars_off;
             bar.position();
             self.bars.push(bar);
         }
@@ -240,6 +261,8 @@ impl App {
         }
         self.sampler.want_gpu = layout_uses(&self.cfg, "gpu");
         self.sampler.want_net = layout_uses(&self.cfg, "net");
+        self.sampler.want_disk = layout_uses(&self.cfg, "disk");
+        self.sampler.want_apps = layout_uses(&self.cfg, "apps");
         self.refresh_floating();
         self.invalidate();
     }
@@ -290,6 +313,16 @@ impl App {
                 let _ = InvalidateRect(b.hwnd, None, false);
             }
         }
+    }
+
+    /// Cache ou ré-affiche toutes les barres (bouton, raccourci Ctrl+Alt+B, icône de notification).
+    pub(crate) fn toggle_bars(&mut self) {
+        self.bars_off = !self.bars_off;
+        self.close_popup();
+        for b in &mut self.bars {
+            b.set_off(self.bars_off);
+        }
+        self.invalidate();
     }
 
     pub(crate) fn autohide(&mut self) {
@@ -403,11 +436,16 @@ pub fn run() -> Result<()> {
             clipboard: Vec::new(),
             clipboard_listening: false,
             notifier: Notifier::default(),
+            bars_off: false,
+            speed: speedtest::Shared::default(),
+            speed_last: None,
         };
         app.sampler.watch_audio(main.0 as isize, WM_APP_AUDIO);
         app.sync_clipboard_listener();
         app.sampler.want_gpu = layout_uses(&app.cfg, "gpu");
         app.sampler.want_net = layout_uses(&app.cfg, "net");
+        app.sampler.want_disk = layout_uses(&app.cfg, "disk");
+        app.sampler.want_apps = layout_uses(&app.cfg, "apps");
         app.sampler.sample();
         APP.with(|cell| *cell.borrow_mut() = Some(app));
         with_app(|app| app.rebuild());
@@ -418,12 +456,15 @@ pub fn run() -> Result<()> {
         workers::spawn_weather(main, WM_APP_WEATHER, weather, weather_cfg, weather_wake);
         media::spawn(main, WM_APP_MEDIA, media);
         tray::add(main);
+        // Ctrl + Alt + B : afficher / masquer la barre. Silencieux si une autre application a déjà pris la combinaison.
+        let _ = RegisterHotKey(main, HOTKEY_TOGGLE, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'B' as u32);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        let _ = UnregisterHotKey(main, HOTKEY_TOGGLE);
         tray::remove(main);
         clipboard::listen(main, false);
         with_app(|app| {

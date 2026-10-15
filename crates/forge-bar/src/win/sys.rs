@@ -1,6 +1,7 @@
 //! Mesures système (CPU, RAM, batterie, son, Wi-Fi) et actions (bureau, volume).
 //! Chaque mesure est un appel Windows peu coûteux, fait au rythme du minuteur.
 
+use super::apps::Windows;
 use super::audio::{self, DeviceWatcher, VolumeWatcher};
 use super::metrics::{Gpu, Net};
 use crate::widgets::{SysData, Wifi};
@@ -12,6 +13,7 @@ use windows::Win32::NetworkManagement::WiFi::{
     wlan_intf_opcode_current_connection, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle,
     WlanQueryInterface, WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST,
 };
+use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
@@ -54,6 +56,9 @@ pub struct Sampler {
     /// Widgets coûteux : mesurés seulement s'ils sont dans une disposition.
     pub want_gpu: bool,
     pub want_net: bool,
+    pub want_disk: bool,
+    pub want_apps: bool,
+    windows: Windows,
     ticks: u64,
     pub data: SysData,
 }
@@ -118,6 +123,11 @@ impl Sampler {
         if self.want_net {
             self.data.net = self.net.sample();
         }
+        // L'occupation d'un disque bouge lentement : toutes les 10 secondes.
+        if self.want_disk && self.ticks % 10 == 1 {
+            self.data.disk = system_drive_usage();
+        }
+        self.data.apps = if self.want_apps { self.windows.list() } else { Vec::new() };
         self.data.clock = chrono::Local::now().format("%H:%M").to_string();
         let snapshot = self.data.clone();
         self.data.hist.record(&snapshot);
@@ -190,6 +200,19 @@ impl Sampler {
         self.sample_volume();
     }
 
+    /// Fixe le volume (0 à 1) et sort de la sourdine si on monte le son.
+    pub fn set_volume(&mut self, v: f32) {
+        if let Some(ep) = self.endpoint() {
+            unsafe {
+                let _ = ep.SetMasterVolumeLevelScalar(v.clamp(0.0, 1.0), std::ptr::null());
+                if v > 0.0 {
+                    let _ = ep.SetMute(false, std::ptr::null());
+                }
+            }
+        }
+        self.sample_volume();
+    }
+
     pub fn toggle_mute(&mut self) {
         if let Some(ep) = self.endpoint() {
             unsafe {
@@ -247,6 +270,15 @@ impl Sampler {
     }
 }
 
+/// Part utilisée du lecteur système, en pourcentage.
+fn system_drive_usage() -> Option<f32> {
+    let root = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()) + "\\";
+    let wide: Vec<u16> = root.encode_utf16().chain([0]).collect();
+    let (mut total, mut free) = (0u64, 0u64);
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), None, Some(&mut total), Some(&mut free)) }.ok()?;
+    (total > 0).then(|| 100.0 * (1.0 - free as f64 / total as f64) as f32)
+}
+
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -269,9 +301,9 @@ pub fn toggle_desktop() {
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }
 
-/// Lecture / pause du média en cours, comme la touche multimédia du clavier.
-pub fn media_play_pause() {
-    let k = VIRTUAL_KEY(0xB3);
+/// Touche multimédia : 0xB3 lecture / pause, 0xB0 piste suivante, 0xB1 piste précédente.
+pub fn media_key(code: u16) {
+    let k = VIRTUAL_KEY(code);
     let inputs = [key(k, false), key(k, true)];
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }

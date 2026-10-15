@@ -1,7 +1,7 @@
 # Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
 # ou créez un fichier avec `extends = "mica-light"` pour n'en changer que quelques valeurs.
 name = "Mica clair"
-family = "windows"
+family = "Windows"
 backdrop = "mica"
 radius = 0.0
 border_width = 0.0

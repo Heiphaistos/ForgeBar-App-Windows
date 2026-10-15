@@ -8,7 +8,7 @@ use forge_config::{Backdrop, ClaudeConfig, Condition, Edge, Mode, ScreenConfig, 
 use std::collections::HashMap;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D_SIZE_U};
-use windows::Win32::Graphics::Direct2D::{ID2D1Factory, ID2D1HwndRenderTarget};
+use windows::Win32::Graphics::Direct2D::{ID2D1Bitmap, ID2D1Factory, ID2D1HwndRenderTarget};
 use windows::Win32::Graphics::DirectWrite::{IDWriteFactory, IDWriteTextFormat};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMSBT_TABBEDWINDOW,
@@ -21,7 +21,7 @@ use windows::Win32::UI::Shell::{
     APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    DestroyWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE,
 };
 
 /// Flou acrylique derrière la fenêtre via `SetWindowCompositionAttribute` (user32, non documentée,
@@ -102,6 +102,11 @@ pub struct Bar {
     pub(super) conds: HashMap<String, Condition>,
     /// Zones cliquables de la dernière image, en pixels logiques.
     pub hits: Vec<(D2D_RECT_F, String)>,
+    /// Barre masquée par l'utilisateur (bouton, raccourci ou icône de notification).
+    pub off: bool,
+    /// Icônes d'applications converties en bitmaps, valables pour la cible `bitmap_rt`.
+    pub(super) bitmaps: HashMap<isize, (isize, ID2D1Bitmap)>,
+    pub(super) bitmap_rt: usize,
 }
 
 impl Bar {
@@ -119,6 +124,9 @@ impl Bar {
             fonts: None,
             conds: HashMap::new(),
             hits: Vec::new(),
+            off: false,
+            bitmaps: HashMap::new(),
+            bitmap_rt: 0,
         };
         bar.conds =
             bar.screen.show_when.iter().filter_map(|(k, v)| Some((k.clone(), Condition::parse(v).ok()?))).collect();
@@ -206,6 +214,9 @@ impl Bar {
 
     /// Calcule et applique la position de la barre.
     pub fn position(&mut self) {
+        if self.off {
+            return;
+        }
         let s = self.scale();
         // Deux rangées ont besoin de place : au moins 52 pixels logiques.
         let rows = self.screen.layout.rows().len() as u32;
@@ -275,6 +286,19 @@ impl Bar {
             let mut abd = self.appbar_data();
             unsafe { SHAppBarMessage(ABM_REMOVE, &mut abd) };
             self.registered = false;
+        }
+    }
+
+    /// Masque ou ré-affiche la barre : l'espace réservé est rendu au bureau tant qu'elle est cachée.
+    pub fn set_off(&mut self, off: bool) {
+        self.off = off;
+        if off {
+            self.unregister();
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_HIDE);
+            }
+        } else {
+            self.position();
         }
     }
 

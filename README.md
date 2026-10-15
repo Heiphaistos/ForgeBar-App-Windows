@@ -102,7 +102,7 @@ enabled = false
 history = 10
 ```
 
-Widgets disponibles : `desktop`, `media`, `claude`, `cpu`, `ram`, `gpu`, `net`, `weather`, `clipboard`, `wifi`, `sound`, `battery`, `clock`. Un widget sans donnée sur la machine (batterie sur un PC fixe, GPU sans compteur) n'apparaît pas. Quand la barre est trop étroite, les widgets les moins importants disparaissent (média, météo, réseau, GPU…) plutôt que de se chevaucher.
+Widgets disponibles : `desktop`, `apps` (miniatures des fenêtres ouvertes), `media`, `claude`, `cpu`, `ram`, `gpu`, `disk` (occupation du disque système), `net`, `weather`, `clipboard`, `wifi`, `sound`, `battery`, `clock`, `toggle` (bouton qui masque la barre). Un widget sans donnée sur la machine (batterie sur un PC fixe, GPU sans compteur) n'apparaît pas. Quand la barre est trop étroite, les widgets les moins importants disparaissent (média, météo, réseau, GPU…) plutôt que de se chevaucher.
 
 La grille de prix (`[[claude.prices]]`) est écrite dans le fichier au premier lancement. Vérifiez-la sur la page de tarifs d'Anthropic : le coût affiché n'est qu'une estimation à partir des tokens. Un modèle absent de la grille est compté en tokens, sans coût.
 
@@ -112,7 +112,7 @@ Les coûts réels de l'organisation demandent une clé Admin (`sk-ant-admin…`)
 
 ### Packs d'icônes
 
-Un pack est un dossier `%APPDATA%\ForgeBar\icons\<nom>\` avec un SVG par widget : `desktop`, `wifi`, `volume`, `mute`, `battery`, `clock`, `cpu`, `ram`, `gpu`, `net`, `weather`, `media`, `clipboard`, `claude`. Sont lus : `path`, `circle`, `rect`, `ellipse`, `line`, `polyline`, `polygon`, remplissage ou contour en `currentColor`. Pas de dégradés, de transformations ni de CSS. Le pack intégré `forge` sert d'exemple (`assets/icons/forge`).
+Un pack est un dossier `%APPDATA%\ForgeBar\icons\<nom>\` avec un SVG par widget : `desktop`, `wifi`, `volume`, `mute`, `battery`, `clock`, `cpu`, `ram`, `gpu`, `disk`, `net`, `weather`, `media`, `clipboard`, `claude`. Sont lus : `path`, `circle`, `rect`, `ellipse`, `line`, `polyline`, `polygon`, remplissage ou contour en `currentColor`. Pas de dégradés, de transformations ni de CSS. Le pack intégré `forge` sert d'exemple (`assets/icons/forge`).
 
 ## Thèmes
 
@@ -181,3 +181,10 @@ Une fenêtre de messages invisible porte les minuteurs : mesures toutes les seco
 - `wlanapi.dll` est requise. Elle est présente sur Windows 10 et 11, mais absente de Windows Server sans le service WLAN.
 - Les icônes de la zone de notification utilisent l'icône d'application générique de Windows.
 - Les binaires ne sont pas signés.
+
+## Clic droit, masquage, thèmes adaptatifs (0.5.0)
+
+- **Clic droit sur un widget** : menu propre au widget (son : couper et 11 paliers de volume ; réseau : test de débit Cloudflare, latence, descendant, montant ; disque, CPU, Wi-Fi, batterie, média, horloge, miniature d'application : activer, réduire, fermer). Le bas du menu est commun : masquer la barre, personnaliser, thèmes, recharger, quitter.
+- **Masquer / afficher la barre** : widget `toggle`, icône de notification (clic gauche), raccourci **Ctrl + Alt + B**, ou le menu. L'espace réservé est rendu au bureau tant qu'elle est masquée.
+- **Thèmes adaptatifs** : `adaptive = "system"` (mode clair/sombre et couleur d'accentuation de Windows) ou `adaptive = "wallpaper"` (teinte du fond d'écran). Recalculés dès que Windows change de mode ou de couleur. Thèmes fournis : `auto-windows`, `auto-fond`.
+- **Éditeur de réglages** : aperçu en direct (chaque changement est appliqué à la vraie barre), bouton Rétablir.

@@ -16,6 +16,7 @@ pub mod glyph {
     pub const CLOCK: char = '\u{E823}';
     pub const BATTERY: char = '\u{E83F}';
     pub const CLIPBOARD: char = '\u{E77F}';
+    pub const HIDE: char = '\u{E70D}';
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,16 @@ pub struct Wifi {
     pub ssid: String,
     /// Qualité du signal, de 0 à 100.
     pub signal: u32,
+}
+
+/// Fenêtre ouverte, affichée comme une miniature cliquable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppWin {
+    pub hwnd: isize,
+    pub title: String,
+    pub active: bool,
+    /// Clé de l'icône (change quand l'application change d'icône) et pixels BGRA prémultipliés 32 x 32.
+    pub icon: Option<(isize, std::sync::Arc<Vec<u8>>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +134,10 @@ pub struct SysData {
     pub weather: Option<weather::Now>,
     /// Historique du presse-papiers, du plus récent au plus ancien ; `None` si le widget est désactivé.
     pub clipboard: Option<Vec<String>>,
+    /// Occupation du disque système en pourcentage ; `None` si illisible.
+    pub disk: Option<f32>,
+    /// Fenêtres ouvertes, dans l'ordre stable de la barre des tâches ; vide si le widget n'est pas utilisé.
+    pub apps: Vec<AppWin>,
     pub clock: String,
     pub hist: History,
 }
@@ -266,7 +281,7 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
     let pct = |id: &str, svg, label: &str, v: f32, warn, crit, series| {
         let mut s = seg(id, svg, None, format!("{label} {v:.0} %"), format!("{v:.0} %"), level_for(v, warn, crit));
         s.value = Some(v);
-        s.series = Some(series);
+        s.series = series;
         s
     };
     match id {
@@ -299,9 +314,12 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
             s.value = Some(p as f32);
             Some(s)
         }
-        "cpu" => Some(pct(id, "cpu", "CPU", sys.cpu, 80.0, 95.0, Series::Cpu)),
-        "ram" => Some(pct(id, "ram", "RAM", sys.ram, 85.0, 95.0, Series::Ram)),
-        "gpu" => Some(pct(id, "gpu", "GPU", sys.gpu?, 85.0, 95.0, Series::Gpu)),
+        "cpu" => Some(pct(id, "cpu", "CPU", sys.cpu, 80.0, 95.0, Some(Series::Cpu))),
+        "ram" => Some(pct(id, "ram", "RAM", sys.ram, 85.0, 95.0, Some(Series::Ram))),
+        "gpu" => Some(pct(id, "gpu", "GPU", sys.gpu?, 85.0, 95.0, Some(Series::Gpu))),
+        "disk" => Some(pct(id, "disk", "DSK", sys.disk?, 85.0, 95.0, None)),
+        "toggle" => Some(seg(id, "toggle", Some(glyph::HIDE), String::new(), String::new(), Level::Secondary)),
+        "apps" if !sys.apps.is_empty() => Some(seg(id, "apps", None, String::new(), String::new(), Level::Normal)),
         "net" => {
             let (down, up) = sys.net?;
             let t = format!("↓ {}  ↑ {}", fmt_rate(down), fmt_rate(up));
@@ -351,7 +369,7 @@ mod tests {
     fn hides_missing_hardware() {
         let (sys, cfg, s) = (SysData::default(), ClaudeConfig::default(), Summary::default());
         let i = inputs(&sys, &s, &cfg, false);
-        for id in ["battery", "wifi", "gpu", "net", "weather", "media", "clipboard"] {
+        for id in ["battery", "wifi", "gpu", "disk", "apps", "net", "weather", "media", "clipboard"] {
             assert!(build(id, &i).is_none(), "{id}");
         }
         assert!(build("cpu", &i).is_some());

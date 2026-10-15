@@ -16,6 +16,55 @@ pub enum Backdrop {
     Tabbed,
 }
 
+/// Thème qui se recalcule selon l'environnement Windows au lieu d'avoir des couleurs figées.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Adaptive {
+    #[default]
+    None,
+    /// Mode clair ou sombre et couleur d'accentuation de Windows.
+    System,
+    /// Teinte tirée du fond d'écran, en plus du mode clair ou sombre.
+    Wallpaper,
+}
+
+/// Ce que Windows dit de l'environnement, pour les thèmes adaptatifs.
+#[derive(Debug, Clone, Copy)]
+pub struct Env {
+    pub dark: bool,
+    pub accent: Rgba,
+    pub wallpaper: Option<Rgba>,
+}
+
+const WHITE: Rgba = Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+const BLACK: Rgba = Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+
+fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
+    let m = |x: f32, y: f32| x + (y - x) * t;
+    Rgba { r: m(a.r, b.r), g: m(a.g, b.g), b: m(a.b, b.b), a: 1.0 }
+}
+
+fn luma(c: Rgba) -> f32 {
+    0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+}
+
+fn hex(c: Rgba, alpha: f32) -> String {
+    let b = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02X}{:02X}{:02X}{:02X}", b(c.r), b(c.g), b(c.b), b(alpha))
+}
+
+/// Éclaircit (fond sombre) ou assombrit (fond clair) une couleur jusqu'à ce qu'elle se lise bien dessus.
+fn readable(mut c: Rgba, dark_bg: bool) -> Rgba {
+    for _ in 0..10 {
+        let l = luma(c);
+        if (dark_bg && l >= 0.5) || (!dark_bg && l <= 0.3) {
+            break;
+        }
+        c = mix(c, if dark_bg { WHITE } else { BLACK }, 0.15);
+    }
+    c
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BackgroundKind {
@@ -76,6 +125,7 @@ pub struct Theme {
     pub mono_family: String,
     pub font_size: f32,
     pub spacing: f32,
+    pub adaptive: Adaptive,
     pub background: Background,
     pub colors: ThemeColors,
 }
@@ -92,6 +142,7 @@ impl Default for Theme {
             mono_family: "Cascadia Mono".into(),
             font_size: 12.0,
             spacing: 14.0,
+            adaptive: Adaptive::None,
             background: Background::default(),
             colors: ThemeColors::default(),
         }
@@ -103,6 +154,31 @@ fn color_or(s: &str, fallback: Rgba) -> Rgba {
 }
 
 impl Theme {
+    /// Thème adaptatif résolu pour l'environnement donné ; un thème ordinaire ressort inchangé.
+    pub fn adapted(mut self, env: &Env) -> Theme {
+        let (tint, neutral) = match self.adaptive {
+            Adaptive::None => return self,
+            Adaptive::System => (env.accent, if env.dark { 0.0 } else { 1.0 }),
+            Adaptive::Wallpaper => (env.wallpaper.unwrap_or(env.accent), -1.0),
+        };
+        // Système : fond neutre ; fond d'écran : fond teinté par la couleur dominante.
+        let bg = if neutral >= 0.0 {
+            if env.dark { Rgba { r: 0.125, g: 0.125, b: 0.125, a: 1.0 } } else { Rgba { r: 0.953, g: 0.953, b: 0.953, a: 1.0 } }
+        } else if env.dark {
+            mix(tint, BLACK, 0.8)
+        } else {
+            mix(tint, WHITE, 0.85)
+        };
+        let ink = if env.dark { WHITE } else { Rgba { r: 0.06, g: 0.06, b: 0.06, a: 1.0 } };
+        self.background.kind = BackgroundKind::Solid;
+        self.background.colors = vec![hex(bg, 1.0)];
+        self.colors.text = hex(ink, 1.0);
+        self.colors.text_secondary = hex(ink, 0.7);
+        self.colors.accent = hex(readable(tint, env.dark), 1.0);
+        self.colors.border = hex(ink, 0.16);
+        self
+    }
+
     pub fn text(&self) -> Rgba {
         color_or(&self.colors.text, Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 })
     }
@@ -227,6 +303,20 @@ mod tests {
                 assert!(parse_color(c).is_some(), "{id} : couleur de fond invalide {c}");
             }
         }
+    }
+
+    #[test]
+    fn adaptive_theme_follows_the_environment() {
+        let mut t = Theme { adaptive: Adaptive::System, ..Theme::default() };
+        let accent = Rgba { r: 0.0, g: 0.47, b: 0.83, a: 1.0 };
+        let dark = t.clone().adapted(&Env { dark: true, accent, wallpaper: None });
+        let light = t.clone().adapted(&Env { dark: false, accent, wallpaper: None });
+        assert_eq!(dark.colors.text, "#FFFFFFFF");
+        assert!(light.colors.text.starts_with("#0F0F0F"));
+        assert_ne!(dark.background.colors, light.background.colors);
+        assert!(luma(parse_color(&dark.colors.accent).unwrap()) >= 0.5, "accent lisible sur fond sombre");
+        t.adaptive = Adaptive::None;
+        assert_eq!(t.clone().adapted(&Env { dark: true, accent, wallpaper: None }).colors.text, t.colors.text);
     }
 
     #[test]

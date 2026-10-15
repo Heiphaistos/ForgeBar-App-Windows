@@ -1,0 +1,23 @@
+# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou créez un fichier avec `extends = "brume"` pour n'en changer que quelques valeurs.
+name = "Brume"
+family = "Moderne"
+backdrop = "acrylic"
+radius = 14.0
+border_width = 1.0
+font_family = "Segoe UI Variable Text"
+mono_family = "Cascadia Mono"
+font_size = 12.0
+spacing = 14.0
+
+[background]
+kind = "solid"
+colors = ["#EEF1F6"]
+angle = 0.0
+opacity = 0.55
+
+[colors]
+text = "#1B2430"
+text_secondary = "#1B2430CC"
+accent = "#2F5FC4"
+border = "#FFFFFF66"

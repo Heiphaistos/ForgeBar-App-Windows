@@ -2,7 +2,7 @@
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_ERROR, NIIF_WARNING, NIM_ADD, NIM_DELETE,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_ERROR, NIIF_INFO, NIIF_WARNING, NIM_ADD, NIM_DELETE,
     NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION, WM_APP};
@@ -47,11 +47,20 @@ pub fn remove(hwnd: HWND) {
 
 /// Bulle de notification Windows.
 pub fn balloon(hwnd: HWND, title: &str, body: &str, critical: bool) {
+    notify(hwnd, title, body, if critical { NIIF_ERROR } else { NIIF_WARNING });
+}
+
+/// Bulle d'information simple (résultat d'un test, confirmation).
+pub fn info(hwnd: HWND, title: &str, body: &str) {
+    notify(hwnd, title, body, NIIF_INFO);
+}
+
+fn notify(hwnd: HWND, title: &str, body: &str, flags: windows::Win32::UI::Shell::NOTIFY_ICON_INFOTIP_FLAGS) {
     let mut d = data(hwnd);
     d.uFlags = NIF_INFO;
     d.szInfoTitle = wide(title);
     d.szInfo = wide(body);
-    d.dwInfoFlags = if critical { NIIF_ERROR } else { NIIF_WARNING };
+    d.dwInfoFlags = flags;
     unsafe {
         let _ = Shell_NotifyIconW(NIM_MODIFY, &d);
     }

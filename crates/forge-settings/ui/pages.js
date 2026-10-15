@@ -3,8 +3,9 @@ const ZONES = [['left', 'Gauche'], ['center', 'Centre'], ['right', 'Droite']];
 let L = null; // { hand, rows: [zones, zones|null] }
 let drag = null;
 let wsel = null; // widget sélectionné
-const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', net: 'Réseau', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
+const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', disk: 'Disque', apps: 'Applications ouvertes', toggle: 'Bouton masquer', net: 'Réseau', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
 const wname = (w) => WNAMES[w] || w;
+const PRESET_NAMES = { classic: 'Classique', centered: 'Centré', split: 'Réparti', islands: 'Îlots', compact: 'Compact', hud_first: 'HUD Claude en premier', double_row: 'Deux rangées', custom: 'Personnalisé' };
 
 function layoutLoad() {
   const lay = cfg.screen[sel].layout, p = S.presets.find((x) => x.id === lay.preset);
@@ -83,7 +84,7 @@ function pageLayout() {
   const pool = zoneEl('Widgets disponibles (déposez ici pour retirer)', S.widgets.filter((w) => !usedWidgets().includes(w)), null, null);
   return [h('div', { class: 'panel' },
     h('div', { class: 'row' },
-      fld('Préréglage', selectEl(lay.preset, S.presets.map((p) => [p.id, p.id.replace('_', ' ')]), (v) => {
+      fld('Préréglage', selectEl(lay.preset, S.presets.map((p) => [p.id, PRESET_NAMES[p.id] || p.id]), (v) => {
         if (L.hand && !confirm('Remplacer vos zones personnalisées par ce préréglage ?')) { setTab('layout'); return; }
         lay.preset = v; for (const [k] of ZONES) { lay[k] = []; lay.row2[k] = []; }
         touch(); wsel = null; setTab('layout');
@@ -195,6 +196,9 @@ function fillScreens() {
 async function start() {
   $('#tabs').replaceChildren(...TABS.map(([id, label]) => h('button', { role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label)));
   $('#save').addEventListener('click', saveConfig);
+  $('#live').checked = live;
+  $('#live').addEventListener('change', (e) => { live = e.target.checked; try { localStorage.setItem('live', live ? '1' : '0'); } catch { /* stockage indisponible */ } });
+  $('#revert').addEventListener('click', async () => { cfg = clone(orig); await saveConfig(); fillScreens(); setTab(tab); msg('Réglages d\'origine rétablis.', 'ok'); });
   $('#screen-sel').addEventListener('change', (e) => { sel = Number(e.target.value); wsel = null; setTab(tab); });
   $('#quit').addEventListener('click', async () => {
     if (dirty && !confirm('Des modifications ne sont pas enregistrées. Fermer quand même ?')) return;

@@ -103,6 +103,8 @@ fn demo_sys() -> SysData {
         cpu: 37.0,
         ram: 62.0,
         gpu: Some(21.0),
+        disk: Some(63.0),
+        apps: ["Explorateur","Brave","Terminal","Discord"].iter().enumerate().map(|(i, t)| crate::widgets::AppWin { hwnd: i as isize + 1, title: t.to_string(), active: i == 1, icon: None }).collect(),
         net: Some((1_250_000.0, 82_000.0)),
         battery: Some((78, false)),
         volume: Some((0.55, false)),
@@ -384,7 +386,7 @@ fn run_inner(args: &[String]) -> Result<(), String> {
         let job = Job {
             env: &env,
             cfg: &cfg,
-            theme: themes.get(&a.theme),
+            theme: themes.get(&a.theme).adapted(&super::wallpaper::env(true)),
             width: a.width,
             scene: a.scene.as_deref(),
             pack_name: &cfg.general.icon_pack,
@@ -405,7 +407,7 @@ fn run_inner(args: &[String]) -> Result<(), String> {
             let job = Job {
                 env: &env,
                 cfg: &c,
-                theme: themes.get(&id),
+                theme: themes.get(&id).adapted(&super::wallpaper::env(true)),
                 width: a.width,
                 scene: None,
                 pack_name: &c.general.icon_pack,

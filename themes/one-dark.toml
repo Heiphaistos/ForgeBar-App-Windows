@@ -1,7 +1,7 @@
 # Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
 # ou créez un fichier avec `extends = "one-dark"` pour n'en changer que quelques valeurs.
 name = "One Dark"
-family = "dev"
+family = "Développeur"
 backdrop = "none"
 radius = 0.0
 border_width = 0.0
