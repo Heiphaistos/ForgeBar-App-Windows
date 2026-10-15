@@ -12,12 +12,12 @@ spacing = 14.0
 
 [background]
 kind = "solid"
-colors = ["#2ECC71"]
+colors = ["#7FE0A8"]
 angle = 0.0
-opacity = 0.28
+opacity = 0.75
 
 [colors]
 text = "#04210F"
-text_secondary = "#1E4A30"
-accent = "#00692F"
+text_secondary = "#13391F"
+accent = "#003D1A"
 border = "#FFFFFF33"

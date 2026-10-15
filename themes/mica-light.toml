@@ -14,7 +14,7 @@ spacing = 14.0
 kind = "solid"
 colors = ["#F3F3F3"]
 angle = 0.0
-opacity = 0.35
+opacity = 0.75
 
 [colors]
 text = "#1B1B1B"

@@ -1,5 +1,5 @@
-# Thème intégré Forge Bar — copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
-# ou créez un fichier avec `extends = "glass-rose"` pour n'en changer que quelques valeurs.
+﻿# ThÃ¨me intÃ©grÃ© Forge Bar â€” copiez ce fichier dans %APPDATA%\ForgeBar\themes pour le modifier,
+# ou crÃ©ez un fichier avec `extends = "glass-rose"` pour n'en changer que quelques valeurs.
 name = "Cristal rose"
 family = "glass"
 backdrop = "acrylic"
@@ -12,12 +12,12 @@ spacing = 14.0
 
 [background]
 kind = "solid"
-colors = ["#FF8FB1"]
+colors = ["#FFB3CC"]
 angle = 0.0
-opacity = 0.28
+opacity = 0.75
 
 [colors]
 text = "#2A0A16"
-text_secondary = "#5A2338"
-accent = "#B0004A"
+text_secondary = "#4A1A2C"
+accent = "#660029"
 border = "#FFFFFF33"

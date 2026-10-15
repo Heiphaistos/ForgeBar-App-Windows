@@ -24,6 +24,50 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
 };
 
+/// Flou acrylique derrière la fenêtre via `SetWindowCompositionAttribute` (user32, non documentée,
+/// stable depuis Windows 10 1803 ; méthode de TranslucentTB). Renvoie false si l'API est absente.
+fn set_acrylic_blur(hwnd: HWND, on: bool) -> bool {
+    use windows::core::{s, w};
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    #[repr(C)]
+    struct AccentPolicy {
+        state: u32,
+        flags: u32,
+        gradient: u32,
+        animation: u32,
+    }
+    #[repr(C)]
+    struct CompositionData {
+        attribute: u32,
+        data: *mut AccentPolicy,
+        size: usize,
+    }
+    type SetWca = unsafe extern "system" fn(HWND, *mut CompositionData) -> BOOL;
+    const WCA_ACCENT_POLICY: u32 = 19;
+    const ACCENT_DISABLED: u32 = 0;
+    const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+    unsafe {
+        let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else { return false };
+        let Some(proc) = GetProcAddress(user32, s!("SetWindowCompositionAttribute")) else { return false };
+        let set: SetWca = std::mem::transmute(proc);
+        // Teinte ABGR quasi nulle : la couleur et l'opacité viennent du fond dessiné par le thème
+        // (alpha 0 fait clignoter certaines versions de Windows).
+        let mut policy = AccentPolicy {
+            state: if on { ACCENT_ENABLE_ACRYLICBLURBEHIND } else { ACCENT_DISABLED },
+            flags: 0,
+            gradient: 0x0100_0000,
+            animation: 0,
+        };
+        let mut data = CompositionData {
+            attribute: WCA_ACCENT_POLICY,
+            data: &mut policy,
+            size: std::mem::size_of::<AccentPolicy>(),
+        };
+        set(hwnd, &mut data).as_bool()
+    }
+}
+
 pub const WM_APPBAR: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
 /// Ce dont le rendu a besoin, prêté par l'application à chaque image.
@@ -103,7 +147,15 @@ impl Bar {
                 &dark as *const _ as _,
                 std::mem::size_of::<i32>() as u32,
             );
+            // Les fonds système Acrylic/Mica deviennent opaques dès que la fenêtre perd le focus, et une
+            // barre ne l'a jamais : le verre dépoli passe par le flou de composition, actif en permanence.
+            // Mica et Tabbed aussi : le fond système n'est plus qu'un secours si l'API manque.
+            let glass = self.theme.backdrop != Backdrop::None && set_acrylic_blur(self.hwnd, true);
+            if !glass {
+                set_acrylic_blur(self.hwnd, false);
+            }
             let kind = match self.theme.backdrop {
+                _ if glass => DWMSBT_NONE,
                 Backdrop::None => DWMSBT_NONE,
                 Backdrop::Mica => DWMSBT_MAINWINDOW,
                 Backdrop::Acrylic => DWMSBT_TRANSIENTWINDOW,
