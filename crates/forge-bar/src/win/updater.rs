@@ -232,3 +232,14 @@ mod tests {
         assert!(!is_installed_copy("D:\\Projet\\ForgeBar\\target\\release\\forge-bar.exe"));
     }
 }
+
+#[cfg(test)]
+mod live {
+    /// Installe réellement le MSI de `FB_MSI` puis relance `FB_EXE` : `FB_MSI=... FB_EXE=... cargo test -- --ignored live_install`.
+    #[test]
+    #[ignore]
+    fn live_install() {
+        let (msi, exe) = (std::env::var("FB_MSI").unwrap(), std::env::var("FB_EXE").unwrap());
+        super::install_and_restart(std::path::Path::new(&msi), &exe);
+    }
+}
