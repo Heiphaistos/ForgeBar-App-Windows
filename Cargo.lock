@@ -84,7 +84,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "forge-bar"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "embed-resource",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "forge-claude"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "forge-config",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "forge-config"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "toml 0.8.23",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "forge-settings"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "embed-resource",
  "forge-config",

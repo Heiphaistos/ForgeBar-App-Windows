@@ -363,7 +363,15 @@ impl Config {
     /// Charge le fichier ; s'il n'existe pas, écrit la configuration par défaut.
     pub fn load_or_create(path: &Path) -> Result<Self, ConfigError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Self::from_toml(&text),
+            Ok(text) => {
+                let mut cfg = Self::from_toml(&text)?;
+                // Les widgets apparus depuis la dernière version sont ajoutés aux dispositions écrites à la main.
+                let migrated = cfg.screen.iter_mut().fold(false, |any, s| s.layout.adopt_new_widgets() || any);
+                if migrated {
+                    let _ = std::fs::write(path, cfg.to_toml());
+                }
+                Ok(cfg)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let cfg = Self::default();
                 if let Some(dir) = path.parent() {

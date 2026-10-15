@@ -38,16 +38,17 @@ function dropIndex(zoneEl, e) {
   const i = chips.findIndex((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.bottom && e.clientX < r.left + r.width / 2; });
   return i < 0 ? chips.length : i;
 }
-function chip(w) {
-  const c = h('span', { class: 'w' + (wsel === w ? ' on' : ''), draggable: true, tabindex: 0, role: 'button', title: 'Glisser pour déplacer, cliquer pour régler' }, wname(w));
+function chip(w, pool) {
+  const c = h('span', { class: 'w' + (wsel === w ? ' on' : ''), draggable: true, tabindex: 0, role: 'button', title: pool ? "Cliquer pour l'ajouter à la barre (ou le glisser dans une zone)" : 'Glisser pour déplacer, cliquer pour régler' }, pool ? '+ ' + wname(w) : wname(w));
   c.addEventListener('dragstart', (e) => { drag = w; c.classList.add('dragging'); e.dataTransfer.setData('text/plain', w); e.dataTransfer.effectAllowed = 'move'; });
   c.addEventListener('dragend', () => { drag = null; c.classList.remove('dragging'); });
-  c.addEventListener('click', () => { wsel = wsel === w ? null : w; setTab('layout'); });
+  // Un widget de la réserve s'ajoute d'un clic (fin de la zone Droite) : le glisser-déposer reste possible mais n'est plus obligatoire.
+  c.addEventListener('click', () => { if (pool) moveWidget(w, 0, 'right', 999); else { wsel = wsel === w ? null : w; setTab('layout'); } });
   c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); c.click(); } });
   return c;
 }
 function zoneEl(title, widgets, row, zone) {
-  const z = h('div', { class: 'zone' }, h('small', {}, title), widgets.map(chip));
+  const z = h('div', { class: 'zone' }, h('small', {}, title), widgets.map((w) => chip(w, row == null)));
   z.addEventListener('dragover', (e) => { if (drag) { e.preventDefault(); z.classList.add('over'); } });
   z.addEventListener('dragleave', () => z.classList.remove('over'));
   z.addEventListener('drop', (e) => { e.preventDefault(); z.classList.remove('over'); if (drag) moveWidget(drag, row, zone, row == null ? 0 : dropIndex(z, e)); });
@@ -91,7 +92,9 @@ function pageLayout() {
   const lay = cfg.screen[sel].layout, dbl = lay.preset === 'double_row';
   const rowBox = (r, ri) => h('div', { class: 'panel' }, h('h2', {}, ri ? 'Rangée 2' : 'Rangée 1'),
     h('div', { class: 'zones' }, ZONES.map(([k, n]) => zoneEl(n, r[k], ri, k))));
-  const pool = zoneEl('Widgets disponibles (déposez ici pour retirer)', S.widgets.filter((w) => !usedWidgets().includes(w)), null, null);
+  const missing = S.widgets.filter((w) => !usedWidgets().includes(w));
+  const pool = zoneEl('Widgets disponibles : cliquez pour ajouter à la barre (déposez ici pour retirer)', missing, null, null);
+  const addAll = missing.length ? h('button', { onclick: () => { for (const w of missing) { L.rows[0].right.push(w); } L.hand = true; layoutCommit(); setTab('layout'); } }, 'Tout ajouter à la barre (' + missing.length + ')') : null;
   return [h('div', { class: 'panel' },
     h('div', { class: 'row' },
       fld('Préréglage', selectEl(lay.preset, S.presets.map((p) => [p.id, PRESET_NAMES[p.id] || p.id]), (v) => {
@@ -108,7 +111,7 @@ function pageLayout() {
       h('div', { class: 'row' }, offsetField('zone_left', 'Zone début (px)'), offsetField('zone_center', 'Zone centre (px)'), offsetField('zone_right', 'Zone fin (px)')),
       h('p', { class: 'hint' }, 'Décale toute une zone, par exemple le HUD Claude pour mieux le centrer. Pour un seul widget : cliquez-le ci-dessous.')),
     L.rows.map((r, i) => (r ? rowBox(r, i) : null)),
-    h('div', { class: 'panel' }, pool),
+    h('div', { class: 'panel' }, pool, addAll),
     wsel ? widgetPanel(wsel) : h('p', { class: 'hint' }, 'Cliquez un widget pour régler son style et son affichage conditionnel.')];
 }
 

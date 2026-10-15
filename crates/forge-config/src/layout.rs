@@ -47,11 +47,21 @@ pub struct Layout {
     pub right: Vec<String>,
     /// Deuxième rangée, prioritaire sur celle du préréglage.
     pub row2: RowZones,
+    /// Widgets que cette disposition connaît déjà : un widget apparu dans une version plus récente et absent d'ici
+    /// est ajouté automatiquement aux zones écrites à la main (voir `adopt_new_widgets`).
+    pub seen: Vec<String>,
 }
 
 impl Default for Layout {
     fn default() -> Self {
-        Self { preset: LayoutPreset::Split, left: vec![], center: vec![], right: vec![], row2: RowZones::default() }
+        Self {
+            preset: LayoutPreset::Split,
+            left: vec![],
+            center: vec![],
+            right: vec![],
+            row2: RowZones::default(),
+            seen: vec![],
+        }
     }
 }
 
@@ -80,7 +90,71 @@ pub const ALL: &[&str] = &[
     "toggle",
 ];
 
+/// Widgets qui existaient avant l'introduction de `Layout::seen` (0.5.0) : une disposition ancienne les connaît.
+const LEGACY: &[&str] = &[
+    "desktop",
+    "media",
+    "claude",
+    "cpu",
+    "ram",
+    "gpu",
+    "net",
+    "weather",
+    "clipboard",
+    "wifi",
+    "sound",
+    "battery",
+    "clock",
+];
+
 impl Layout {
+    /// Une disposition écrite à la main ne reçoit pas les widgets créés après elle : l'utilisateur mettait à jour la
+    /// barre et ne voyait jamais les FPS ou les températures. Les widgets jamais vus sont donc ajoutés (miniatures
+    /// au début, le reste avant le réseau) puis marqués comme vus : un widget retiré ensuite à la main reste retiré.
+    /// Renvoie vrai si la disposition a changé (à réécrire sur disque).
+    pub fn adopt_new_widgets(&mut self) -> bool {
+        let hand_written = !(self.left.is_empty() && self.center.is_empty() && self.right.is_empty());
+        let placed: Vec<String> = self
+            .left
+            .iter()
+            .chain(&self.center)
+            .chain(&self.right)
+            .chain(&self.row2.left)
+            .chain(&self.row2.center)
+            .chain(&self.row2.right)
+            .cloned()
+            .collect();
+        let mut seen: Vec<String> =
+            if self.seen.is_empty() { LEGACY.iter().map(|s| s.to_string()).collect() } else { self.seen.clone() };
+        let mut changed = false;
+        if hand_written {
+            for id in ALL.iter().filter(|id| !seen.iter().any(|s| s == *id) && !placed.iter().any(|p| p == *id)) {
+                match *id {
+                    "apps" => {
+                        let at = self.left.iter().position(|w| w == "desktop").map_or(0, |i| i + 1);
+                        self.left.insert(at, id.to_string());
+                    }
+                    "toggle" => self.right.push(id.to_string()),
+                    _ => {
+                        let at = self.right.iter().position(|w| w == "net").unwrap_or(self.right.len());
+                        self.right.insert(at, id.to_string());
+                    }
+                }
+                changed = true;
+            }
+        }
+        for id in ALL {
+            if !seen.iter().any(|s| s == id) {
+                seen.push(id.to_string());
+            }
+        }
+        if self.seen != seen {
+            self.seen = seen;
+            changed = true;
+        }
+        changed
+    }
+
     /// Zones effectives : celles écrites à la main si présentes, sinon celles du préréglage.
     pub fn zones(&self) -> Zones {
         let hand_written = !(self.left.is_empty() && self.center.is_empty() && self.right.is_empty());
@@ -144,6 +218,30 @@ mod tests {
     fn hand_written_zones_override_preset() {
         let l = Layout { preset: LayoutPreset::Centered, left: v(&["clock"]), ..Layout::default() };
         assert_eq!(l.zones().left, v(&["clock"]));
+    }
+
+    #[test]
+    fn old_hand_written_layout_gets_new_widgets_once() {
+        let mut l = Layout {
+            left: v(&["desktop", "media"]),
+            center: v(&["claude"]),
+            right: v(&["cpu", "ram", "net", "clock"]),
+            ..Layout::default()
+        };
+        assert!(l.adopt_new_widgets());
+        assert_eq!(l.left, v(&["desktop", "apps", "media"]));
+        assert_eq!(l.right, v(&["cpu", "ram", "temp", "disk", "fps", "net", "clock", "toggle"]));
+        // Retiré à la main ensuite : il ne revient pas.
+        l.right.retain(|w| w != "fps");
+        assert!(!l.adopt_new_widgets());
+        assert!(!l.right.contains(&"fps".to_string()));
+    }
+
+    #[test]
+    fn preset_layout_is_left_alone() {
+        let mut l = Layout::default();
+        l.adopt_new_widgets();
+        assert!(l.left.is_empty() && l.right.is_empty(), "un préréglage fournit déjà ses widgets");
     }
 
     #[test]

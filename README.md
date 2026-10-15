@@ -203,3 +203,7 @@ Forge Bar est une fenêtre à part : **il n'injecte aucune DLL, ne pose aucun ho
 - Aucune garantie contractuelle n'existe côté éditeurs d'anti-triche ; en cas de doute avec un jeu précis, masquez la barre (Ctrl+Alt+B) ou désactivez les widgets `fps` et `apps`.
 
 Journal : `%APPDATA%\ForgeBar\logsorge-bar.log` (widgets masqués faute de place, etc.). La barre surveille aussi le dossier des thèmes : modifier un thème enregistré s'applique sans toucher à la configuration.
+
+## Disposition : les nouveaux widgets apparaissent tout seuls (0.9.0)
+
+Une disposition écrite à la main (glisser-déposer) ne recevait jamais les widgets créés après elle : après une mise à jour, les FPS, les températures, le disque ou les miniatures restaient dans la réserve, invisibles. Forge Bar ajoute maintenant automatiquement ces widgets (`layout.seen` retient ceux que la disposition connaît déjà ; un widget retiré ensuite à la main reste retiré). Dans l'éditeur, un clic sur un widget de la réserve l'ajoute à la barre, et « Tout ajouter à la barre » les place tous.
