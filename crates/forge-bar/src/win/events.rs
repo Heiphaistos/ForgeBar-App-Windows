@@ -642,7 +642,7 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
             LRESULT(0)
         }
         WM_APP_UPDATE => {
-            with_app(|app| on_update(app));
+            with_app(on_update);
             LRESULT(0)
         }
         WM_APP_SPEED => {

@@ -73,7 +73,11 @@ fn icon_handle(h: HWND) -> Option<HICON> {
             }
         }
         [GCLP_HICON, GCLP_HICONSM].iter().find_map(|i| {
+            #[cfg(target_pointer_width = "64")]
             let v = GetClassLongPtrW(h, *i);
+            // GetClassLongPtrW n'existe pas en 32 bits : GetClassLongW la remplace.
+            #[cfg(target_pointer_width = "32")]
+            let v = GetClassLongW(h, *i) as usize;
             (v != 0).then_some(HICON(v as _))
         })
     }
