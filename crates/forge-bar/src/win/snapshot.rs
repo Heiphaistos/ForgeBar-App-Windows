@@ -104,7 +104,16 @@ fn demo_sys() -> SysData {
         ram: 62.0,
         gpu: Some(21.0),
         disk: Some(63.0),
-        apps: ["Explorateur","Brave","Terminal","Discord"].iter().enumerate().map(|(i, t)| crate::widgets::AppWin { hwnd: i as isize + 1, title: t.to_string(), active: i == 1, icon: None }).collect(),
+        apps: ["Explorateur", "Brave", "Terminal", "Discord"]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| crate::widgets::AppWin {
+                hwnd: i as isize + 1,
+                title: t.to_string(),
+                active: i == 1,
+                icon: None,
+            })
+            .collect(),
         net: Some((1_250_000.0, 82_000.0)),
         battery: Some((78, false)),
         volume: Some((0.55, false)),

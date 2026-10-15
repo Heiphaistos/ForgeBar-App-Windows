@@ -12,11 +12,11 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_GRADIENT_STOP, D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_F,
 };
 use windows::Win32::Graphics::Direct2D::{
-    ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ARC_SEGMENT,
-    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES, D2D1_ARC_SIZE_LARGE,
-    D2D1_ARC_SIZE_SMALL, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1_SWEEP_DIRECTION_CLOCKWISE,
+    ID2D1Brush, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1RenderTarget, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE,
+    D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES, D2D1_DRAW_TEXT_OPTIONS_NONE,
+    D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2, D2D1_HWND_RENDER_TARGET_PROPERTIES,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT,
+    D2D1_SWEEP_DIRECTION_CLOCKWISE,
 };
 use windows::Win32::Graphics::DirectWrite::{
     IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -514,13 +514,23 @@ impl Bar {
                     rt.FillRoundedRectangle(&D2D1_ROUNDED_RECT { rect, radiusX: 5.0, radiusY: 5.0 }, &hi);
                 }
                 if let Some((_, b)) = self.bitmaps.get(&app.hwnd) {
-                    let dest = D2D_RECT_F { left: x, top: cy - APP_ICON / 2.0, right: x + APP_ICON, bottom: cy + APP_ICON / 2.0 };
+                    let dest = D2D_RECT_F {
+                        left: x,
+                        top: cy - APP_ICON / 2.0,
+                        right: x + APP_ICON,
+                        bottom: cy + APP_ICON / 2.0,
+                    };
                     rt.DrawBitmap(b, Some(&dest), 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, None);
                 } else {
                     // Pas d'icône exploitable : initiale de la fenêtre.
                     let letter: String = app.title.chars().next().into_iter().flat_map(char::to_uppercase).collect();
                     let (l, _) = text_layout(ctx.dwrite, &letter, &fonts.small, APP_SLOT, ch)?;
-                    rt.DrawTextLayout(D2D_POINT_2F { x: slot.left, y: cell.top }, &l, &brush, D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    rt.DrawTextLayout(
+                        D2D_POINT_2F { x: slot.left, y: cell.top },
+                        &l,
+                        &brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    );
                 }
             }
             return Ok(());

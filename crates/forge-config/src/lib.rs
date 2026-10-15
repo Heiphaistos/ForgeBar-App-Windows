@@ -12,7 +12,7 @@ pub use color::{parse_color, Rgba};
 pub use condition::Condition;
 pub use layout::ALL as ALL_WIDGETS;
 pub use layout::{Layout, LayoutPreset, RowZones, Zones};
-pub use theme::{Adaptive, Backdrop, Env, Background, BackgroundKind, Theme, ThemeColors, ThemeStore};
+pub use theme::{Adaptive, Backdrop, Background, BackgroundKind, Env, Theme, ThemeColors, ThemeStore};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -58,7 +58,13 @@ pub struct General {
 
 impl Default for General {
     fn default() -> Self {
-        Self { autostart: false, hide_on_fullscreen: true, accent_from_wallpaper: false, auto_update: true, icon_pack: String::new() }
+        Self {
+            autostart: false,
+            hide_on_fullscreen: true,
+            accent_from_wallpaper: false,
+            auto_update: true,
+            icon_pack: String::new(),
+        }
     }
 }
 

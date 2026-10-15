@@ -91,7 +91,9 @@ impl Layout {
             LayoutPreset::Split | LayoutPreset::Islands => Zones {
                 left: v(&["desktop", "apps", "media"]),
                 center: v(&["claude"]),
-                right: v(&["cpu", "ram", "gpu", "disk", "net", "weather", "wifi", "sound", "battery", "clock", "toggle"]),
+                right: v(&[
+                    "cpu", "ram", "gpu", "disk", "net", "weather", "wifi", "sound", "battery", "clock", "toggle",
+                ]),
             },
             LayoutPreset::DoubleRow => {
                 Zones { left: v(&["desktop"]), center: v(&["claude"]), right: v(&["cpu", "ram", "gpu", "clock"]) }

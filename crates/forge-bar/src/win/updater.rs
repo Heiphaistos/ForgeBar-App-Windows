@@ -21,7 +21,10 @@ const MAX_MSI: usize = 64 * 1024 * 1024;
 pub enum Outcome {
     UpToDate,
     /// MSI téléchargé et vérifié, prêt à installer.
-    Ready { version: String, msi: std::path::PathBuf },
+    Ready {
+        version: String,
+        msi: std::path::PathBuf,
+    },
     Failed(String),
 }
 
@@ -87,7 +90,8 @@ fn download(url: &str, max: usize) -> Result<Vec<u8>, String> {
 }
 
 fn check() -> Result<Outcome, String> {
-    let body = http::get(HOST, &format!("/repos/{REPO}/releases/latest"), &[("Accept", "application/vnd.github+json")])?;
+    let body =
+        http::get(HOST, &format!("/repos/{REPO}/releases/latest"), &[("Accept", "application/vnd.github+json")])?;
     let release: Value = serde_json::from_str(&body).map_err(|e| format!("réponse illisible : {e}"))?;
     let tag = release["tag_name"].as_str().ok_or("release sans nom de version")?;
     let latest = parse_version(tag).ok_or("numéro de version illisible")?;

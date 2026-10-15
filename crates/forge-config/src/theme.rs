@@ -163,7 +163,11 @@ impl Theme {
         };
         // Système : fond neutre ; fond d'écran : fond teinté par la couleur dominante.
         let bg = if neutral >= 0.0 {
-            if env.dark { Rgba { r: 0.125, g: 0.125, b: 0.125, a: 1.0 } } else { Rgba { r: 0.953, g: 0.953, b: 0.953, a: 1.0 } }
+            if env.dark {
+                Rgba { r: 0.125, g: 0.125, b: 0.125, a: 1.0 }
+            } else {
+                Rgba { r: 0.953, g: 0.953, b: 0.953, a: 1.0 }
+            }
         } else if env.dark {
             mix(tint, BLACK, 0.8)
         } else {

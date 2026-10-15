@@ -3,9 +3,9 @@
 use super::bar::{Ctx, WM_APPBAR};
 use super::panel::{Kind, Panel};
 use super::{
-    apps, clipboard, speedtest, sys, tray, updater, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE, TIMER_CONFIG,
-    TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD, WM_APP_SPEED,
-    WM_APP_UPDATE, WM_APP_WEATHER,
+    apps, clipboard, speedtest, sys, tray, updater, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE,
+    TIMER_CONFIG, TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD,
+    WM_APP_SPEED, WM_APP_UPDATE, WM_APP_WEATHER,
 };
 use crate::calendar;
 use crate::content::{self, Action};
@@ -551,11 +551,18 @@ fn on_update(app: &mut App) {
         Some(Outcome::Ready { version, msi }) => {
             let exe = super::exe_path();
             if updater::is_installed_copy(&exe) {
-                tray::info(app.main, "Mise à jour", &format!("Forge Bar {version} : installation, la barre redémarre…"));
+                tray::info(
+                    app.main,
+                    "Mise à jour",
+                    &format!("Forge Bar {version} : installation, la barre redémarre…"),
+                );
                 updater::install_and_restart(&msi, &exe);
                 unsafe { PostQuitMessage(0) };
             } else if manual || app.update_notified.as_deref() != Some(version.as_str()) {
-                let text = format!("La version {version} est prête mais cette copie n'est pas celle du MSI : installez {}", msi.display());
+                let text = format!(
+                    "La version {version} est prête mais cette copie n'est pas celle du MSI : installez {}",
+                    msi.display()
+                );
                 tray::info(app.main, "Mise à jour disponible", &text);
                 app.update_notified = Some(version);
             }
