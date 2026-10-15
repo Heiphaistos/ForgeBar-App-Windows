@@ -59,7 +59,7 @@ pub struct General {
 impl Default for General {
     fn default() -> Self {
         Self {
-            autostart: false,
+            autostart: true,
             hide_on_fullscreen: true,
             accent_from_wallpaper: false,
             auto_update: true,
