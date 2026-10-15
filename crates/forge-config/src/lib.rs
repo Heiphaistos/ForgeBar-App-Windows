@@ -11,6 +11,7 @@ mod theme;
 pub use color::{parse_color, Rgba};
 pub use condition::Condition;
 pub use layout::ALL as ALL_WIDGETS;
+pub use layout::OPTIONAL as OPTIONAL_WIDGETS;
 pub use layout::{Layout, LayoutPreset, RowZones, Zones};
 pub use theme::{Adaptive, Backdrop, Background, BackgroundKind, Env, Theme, ThemeColors, ThemeStore};
 
@@ -287,6 +288,71 @@ impl Default for Clipboard {
     }
 }
 
+/// Ce que fait un widget personnalisé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CustomKind {
+    /// Icône et nom : un clic ouvre `target` (programme, dossier ou adresse web).
+    Launcher,
+    /// Lance `command` toutes les `interval_secs` secondes et affiche la première ligne de sa sortie.
+    Command,
+    /// Texte ou emoji fixe ; un clic ouvre `target` s'il est renseigné.
+    #[default]
+    Text,
+}
+
+/// Widget défini par l'utilisateur dans `[[custom]]`. Son `id` s'utilise comme celui d'un widget intégré
+/// dans `left`, `center`, `right`, `styles`, `show_when` et `offsets`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomWidget {
+    pub id: String,
+    pub kind: CustomKind,
+    pub label: String,
+    /// Un caractère (emoji, symbole) ou un code hexadécimal de glyphe Segoe Fluent Icons (`E80F`).
+    pub icon: String,
+    /// Commande exécutée avec vos droits (`cmd /C`), pour le type `command`.
+    pub command: String,
+    pub interval_secs: u64,
+    /// Programme, dossier ou adresse ouverts au clic.
+    pub target: String,
+}
+
+impl Default for CustomWidget {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: CustomKind::Text,
+            label: String::new(),
+            icon: String::new(),
+            command: String::new(),
+            interval_secs: 30,
+            target: String::new(),
+        }
+    }
+}
+
+impl CustomWidget {
+    /// Identifiant utilisable : minuscules, chiffres, `_` et `-`, 24 caractères au plus, distinct des widgets intégrés.
+    pub fn valid_id(id: &str) -> bool {
+        (1..=24).contains(&id.len())
+            && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+            && !ALL_WIDGETS.contains(&id)
+    }
+
+    /// Glyphe à afficher : le caractère saisi, ou le code hexadécimal converti.
+    pub fn glyph(&self) -> Option<char> {
+        let t = self.icon.trim();
+        if t.is_empty() {
+            return None;
+        }
+        if (2..=5).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return u32::from_str_radix(t, 16).ok().and_then(char::from_u32);
+        }
+        t.chars().next()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -295,6 +361,8 @@ pub struct Config {
     pub claude: ClaudeConfig,
     pub weather: Weather,
     pub clipboard: Clipboard,
+    /// Widgets personnalisés (`[[custom]]`).
+    pub custom: Vec<CustomWidget>,
 }
 
 impl Default for Config {
@@ -305,6 +373,7 @@ impl Default for Config {
             claude: ClaudeConfig::default(),
             weather: Weather::default(),
             clipboard: Clipboard::default(),
+            custom: Vec::new(),
         }
     }
 }
@@ -350,6 +419,26 @@ impl Config {
         }
         for (w, c) in self.screen.iter().flat_map(|s| s.show_when.iter()) {
             Condition::parse(c).map_err(|e| ConfigError::Invalid(format!("show_when.{w} : {e}")))?;
+        }
+        for (i, c) in self.custom.iter().enumerate() {
+            if !CustomWidget::valid_id(&c.id) {
+                return Err(ConfigError::Invalid(format!(
+                    "custom[{i}] : identifiant « {} » invalide (minuscules, chiffres, _ et -, 24 caractères, différent d'un widget intégré)",
+                    c.id
+                )));
+            }
+            if self.custom.iter().filter(|o| o.id == c.id).count() > 1 {
+                return Err(ConfigError::Invalid(format!("custom : identifiant « {} » en double", c.id)));
+            }
+            if c.command.len() > 500 || c.target.len() > 500 || c.label.chars().count() > 40 {
+                return Err(ConfigError::Invalid(format!(
+                    "custom « {} » : commande, cible ou libellé trop long",
+                    c.id
+                )));
+            }
+            if c.kind == CustomKind::Command && !(2..=86_400).contains(&c.interval_secs) {
+                return Err(ConfigError::Invalid(format!("custom « {} » : intervalle de 2 à 86400 secondes", c.id)));
+            }
         }
         if !(0.1..=1.0).contains(&self.claude.floating.opacity) {
             return Err(ConfigError::Invalid("claude.floating.opacity doit être entre 0,1 et 1".into()));
@@ -432,5 +521,35 @@ mod tests {
     #[test]
     fn rejects_bad_thickness() {
         assert!(Config::from_toml("[[screen]]\nthickness = 4\n").is_err());
+    }
+}
+
+#[cfg(test)]
+mod custom_tests {
+    use super::*;
+
+    #[test]
+    fn custom_ids_and_glyphs() {
+        assert!(CustomWidget::valid_id("git-status_2"));
+        assert!(!CustomWidget::valid_id("Git"), "majuscules refusées");
+        assert!(!CustomWidget::valid_id("cpu"), "pas de collision avec un widget intégré");
+        assert!(!CustomWidget::valid_id(""));
+        let w = |icon: &str| CustomWidget { icon: icon.into(), ..CustomWidget::default() };
+        assert_eq!(w("E80F").glyph(), Some('\u{E80F}'));
+        assert_eq!(w("📁").glyph(), Some('📁'));
+        assert_eq!(w("").glyph(), None);
+    }
+
+    #[test]
+    fn custom_widgets_are_validated_and_round_trip() {
+        let toml = "[[screen]]\n[[custom]]\nid = \"git\"\nkind = \"command\"\ncommand = \"git status -sb\"\ninterval_secs = 10\n";
+        let cfg = Config::from_toml(toml).unwrap();
+        assert_eq!(cfg.custom[0].kind, CustomKind::Command);
+        assert_eq!(Config::from_toml(&cfg.to_toml()).unwrap().custom, cfg.custom);
+        assert!(Config::from_toml("[[screen]]\n[[custom]]\nid = \"cpu\"\n").is_err());
+        assert!(Config::from_toml("[[screen]]\n[[custom]]\nid = \"a\"\n[[custom]]\nid = \"a\"\n").is_err());
+        assert!(
+            Config::from_toml("[[screen]]\n[[custom]]\nid = \"a\"\nkind = \"command\"\ninterval_secs = 1\n").is_err()
+        );
     }
 }

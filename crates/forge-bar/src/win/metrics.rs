@@ -93,6 +93,59 @@ impl Gpu {
     }
 }
 
+/// Activité de tous les disques physiques en octets par seconde (compteur PDH « Disk Bytes/sec »).
+#[derive(Default)]
+pub struct DiskIo {
+    query: isize,
+    counter: isize,
+    failed: bool,
+    primed: bool,
+}
+
+impl Drop for DiskIo {
+    fn drop(&mut self) {
+        if self.query != 0 {
+            unsafe { PdhCloseQuery(self.query) };
+        }
+    }
+}
+
+impl DiskIo {
+    pub fn sample(&mut self) -> Option<f64> {
+        use windows::Win32::System::Performance::PdhGetFormattedCounterValue;
+        use windows::Win32::System::Performance::PDH_FMT_COUNTERVALUE;
+        if self.failed {
+            return None;
+        }
+        unsafe {
+            if self.query == 0 {
+                let (mut q, mut c) = (0isize, 0isize);
+                let ok = PdhOpenQueryW(PCWSTR::null(), 0, &mut q) == 0
+                    && PdhAddEnglishCounterW(q, w!("\\PhysicalDisk(_Total)\\Disk Bytes/sec"), 0, &mut c) == 0;
+                if !ok {
+                    if q != 0 {
+                        PdhCloseQuery(q);
+                    }
+                    self.failed = true;
+                    return None;
+                }
+                self.query = q;
+                self.counter = c;
+            }
+            if PdhCollectQueryData(self.query) != 0 {
+                return None;
+            }
+            if !self.primed {
+                self.primed = true;
+                return None;
+            }
+            let mut v = PDH_FMT_COUNTERVALUE::default();
+            (PdhGetFormattedCounterValue(self.counter, PDH_FMT_DOUBLE, None, &mut v) == 0)
+                .then_some(v.Anonymous.doubleValue.max(0.0))
+        }
+    }
+}
+
 /// Débit réseau agrégé des cartes physiques actives (les cartes virtuelles, VPN et Hyper-V,
 /// recompteraient les mêmes octets).
 #[derive(Default)]

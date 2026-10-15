@@ -2,6 +2,14 @@
 //! Sert à comprendre à distance pourquoi un widget manque ou une configuration est rejetée.
 
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Seule la vraie barre écrit dans le journal : les rendus d'aperçu (`--snapshot`) le polluaient.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn enable() {
+    ENABLED.store(true, Ordering::Relaxed);
+}
 
 const MAX_BYTES: u64 = 1_000_000;
 
@@ -10,6 +18,9 @@ pub fn info(msg: &str) {
 }
 
 fn write(level: &str, msg: &str) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let dir = forge_config::app_dir().join("logs");
     if std::fs::create_dir_all(&dir).is_err() {
         return;

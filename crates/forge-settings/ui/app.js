@@ -206,7 +206,11 @@ async function refreshBarPreview() {
 }
 
 // ---------- chargement et enregistrement ----------
-async function refreshState() { S = await api('/api/state'); }
+async function refreshState() {
+  S = await api('/api/state');
+  const v = document.querySelector('.brand-text small');
+  if (v && S.version) v.textContent = 'Paramètres · v' + S.version;
+}
 async function load() {
   await refreshState();
   cfg = clone(S.config);

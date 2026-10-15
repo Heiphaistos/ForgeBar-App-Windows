@@ -78,6 +78,7 @@ pub struct Ctx<'a> {
     pub sys: &'a SysData,
     pub claude: &'a Summary,
     pub claude_cfg: &'a ClaudeConfig,
+    pub custom: &'a [forge_config::CustomWidget],
     pub pack: &'a Pack,
 }
 

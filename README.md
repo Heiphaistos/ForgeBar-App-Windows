@@ -212,3 +212,26 @@ Une disposition écrite à la main (glisser-déposer) ne recevait jamais les wid
 
 - **Miniatures d'applications** : mêmes règles que la barre des tâches de Windows (ni fenêtres outils, ni surcouches qui ne prennent jamais le focus, ni les fenêtres de Forge Bar), jusqu'à 16 fenêtres. Les applications UWP (Calculatrice, Paramètres…) ont leur vraie icône, retrouvée par le shell. Un clic sur une fenêtre élevée (Gestionnaire des tâches) fonctionne aussi depuis une barre non élevée.
 - **Barre visible en jeu** : clic droit sur la barre, « Afficher la barre dans les jeux » (équivalent de `general.hide_on_fullscreen = false`). La barre est alors remise au-dessus de la fenêtre du jeu chaque seconde. Elle s'affiche par-dessus les jeux en fenêtré, sans bordure ou en plein écran « optimisé » de Windows ; un vrai plein écran exclusif la recouvre, comme n'importe quelle autre fenêtre.
+
+## Nouveaux widgets et widgets personnalisés (0.12.0)
+
+**Widgets facultatifs** (à placer depuis Disposition ; jamais ajoutés d'office) : `date` (jeu. 15 oct.), `uptime` (temps depuis le démarrage), `memory` (RAM en Go), `ping` (latence vers Cloudflare), `diskio` (activité des disques), `keyboard` (FR/EN…), `mic` (clic : couper le micro), `timer` (chronomètre ou minuteur : clic = démarrer/pause, clic droit = minuteur 5 à 60 min, remise à zéro ; une bulle prévient à la fin).
+
+**Widgets personnalisés** : page « Widgets personnalisés » de l'éditeur, ou à la main dans `config.toml` :
+
+```toml
+[[custom]]
+id = "git"            # minuscules, chiffres, _ et - ; s'utilise comme un widget intégré dans left/center/right
+kind = "command"      # launcher (ouvre `target`), command (affiche la 1re ligne de la sortie), text
+label = "Git"
+icon = ""             # emoji ou code Segoe Fluent Icons (E80F)
+command = "git -C C:\Projets\Depot status -sb"
+interval_secs = 30    # 2 à 86400
+target = ""           # ouvert au clic (programme, dossier, adresse web)
+```
+
+Une commande s'exécute avec vos droits (`cmd /C`), 8 secondes au plus, uniquement si le widget est dans une disposition. Aucun processus ne s'accumule.
+
+**FPS** : les présentations de test (`DXGI_PRESENT_TEST`, faites par beaucoup de jeux à chaque image) et celles des surcouches (une chaîne d'échange à part) ne sont plus comptées : seules celles de la chaîne la plus active du jeu au premier plan. Corrige l'écart avec le compteur du jeu. (Avec la génération d'images — DLSS/FSR Frame Generation — le compteur de Forge Bar affiche les images réellement présentées, donc davantage que les images rendues par le jeu.)
+
+**Plein écran exclusif** : Windows ne permet pas d'afficher une fenêtre par-dessus un vrai plein écran exclusif sans que le jeu en sorte et repasse en fenêtré. Avec « Afficher la barre dans les jeux », Forge Bar reste visible par-dessus un jeu en plein écran **sans bordure** ou **fenêtré**, mais se **retire tout seul** dès qu'un jeu passe en plein écran **exclusif** (ou que le plein écran se met à basculer en boucle) et revient 3 secondes après la fin du jeu : plus de clignotement ni de jeu forcé en fenêtré. Pour garder la barre à l'écran en jeu, choisissez « Plein écran fenêtré » / « Sans bordure » dans les options graphiques du jeu.

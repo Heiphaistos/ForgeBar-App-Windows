@@ -106,6 +106,14 @@ fn demo_sys() -> SysData {
         disk: Some(63.0),
         fps: Some(144),
         fps_denied: false,
+        uptime_secs: 3 * 86_400 + 4 * 3600,
+        memory: Some((9.8, 16.0)),
+        ping_ms: Some(12),
+        disk_io: Some(4_200_000.0),
+        keyboard: "FR".into(),
+        mic_muted: Some(false),
+        timer: Some(("12:34".into(), true)),
+        custom_out: std::collections::HashMap::new(),
         cpu_temp: Some(54.0),
         gpu_temp: Some(68.0),
         apps: ["Explorateur", "Brave", "Terminal", "Discord"]
@@ -337,6 +345,7 @@ fn render_job(job: &Job, out: &str) -> Result<(u32, u32, Vec<u8>), String> {
                 sys: &sys,
                 claude: &claude,
                 claude_cfg: &claude_cfg,
+                custom: &cfg.custom,
                 pack: &pack,
             };
             bar.draw(rt, &ctx, w as f32, h as f32)

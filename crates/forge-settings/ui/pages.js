@@ -3,8 +3,8 @@ const ZONES = [['left', 'Gauche'], ['center', 'Centre'], ['right', 'Droite']];
 let L = null; // { hand, rows: [zones, zones|null] }
 let drag = null;
 let wsel = null; // widget sélectionné
-const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', disk: 'Disque', fps: 'Images par seconde (FPS)', temp: 'Températures', apps: 'Applications ouvertes', toggle: 'Bouton masquer', net: 'Réseau', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
-const wname = (w) => WNAMES[w] || w;
+const WNAMES = { desktop: 'Bureau', media: 'Média', claude: 'Claude', cpu: 'CPU', ram: 'RAM', gpu: 'GPU', disk: 'Disque', fps: 'Images par seconde (FPS)', temp: 'Températures', apps: 'Applications ouvertes', toggle: 'Bouton masquer', net: 'Réseau', date: 'Date', uptime: 'Temps depuis le démarrage', memory: 'Mémoire (Go)', ping: 'Ping', diskio: 'Activité des disques', keyboard: 'Disposition du clavier', mic: 'Micro', timer: 'Minuteur / chronomètre', weather: 'Météo', clipboard: 'Presse-papiers', wifi: 'Wi-Fi', sound: 'Son', battery: 'Batterie', clock: 'Horloge' };
+const wname = (w) => WNAMES[w] || ((cfg && cfg.custom) || []).map((c) => (c.id === w ? c.label || c.id : null)).find(Boolean) || w;
 const PRESET_NAMES = { classic: 'Classique', centered: 'Centré', split: 'Réparti', islands: 'Îlots', compact: 'Compact', hud_first: 'HUD Claude en premier', double_row: 'Deux rangées', custom: 'Personnalisé' };
 
 function layoutLoad() {
@@ -94,7 +94,8 @@ function pageLayout() {
     h('div', { class: 'zones' }, ZONES.map(([k, n]) => zoneEl(n, r[k], ri, k))));
   const missing = S.widgets.filter((w) => !usedWidgets().includes(w));
   const pool = zoneEl('Widgets disponibles : cliquez pour ajouter à la barre (déposez ici pour retirer)', missing, null, null);
-  const addAll = missing.length ? h('button', { onclick: () => { for (const w of missing) { L.rows[0].right.push(w); } L.hand = true; layoutCommit(); setTab('layout'); } }, 'Tout ajouter à la barre (' + missing.length + ')') : null;
+  const essential = missing.filter((w) => !S.optional_widgets.includes(w));
+  const addAll = essential.length ? h('button', { onclick: () => { for (const w of essential) { L.rows[0].right.push(w); } L.hand = true; layoutCommit(); setTab('layout'); } }, 'Ajouter les widgets principaux manquants (' + essential.length + ')') : null;
   return [h('div', { class: 'panel' }, h('h2', {}, 'Disposition de la barre'),
     h('div', { class: 'row' },
       fld('Préréglage', selectEl(lay.preset, S.presets.map((p) => [p.id, PRESET_NAMES[p.id] || p.id]), (v) => {
@@ -178,6 +179,71 @@ function pageClaude() {
       h('button', { class: 'danger', disabled: !S.admin_key, onclick: () => adminKeyAction('/api/admin-key/clear', {}, 'Clé supprimée.') }, 'Supprimer la clé')))];
 }
 
+// ---------- page : widgets personnalisés ----------
+const CUSTOM_KINDS = [['launcher', 'Lanceur (ouvre un programme, un dossier ou un site)'], ['command', 'Commande (affiche sa sortie)'], ['text', 'Texte ou emoji']];
+const CUSTOM_EXAMPLES = [
+  { label: 'Projets', kind: 'launcher', icon: '📁', target: 'C:\\Projets', hint: 'Ouvre un dossier' },
+  { label: 'Git', kind: 'command', icon: '', command: 'git -C C:\\Projets\\MonDepot status -sb', interval_secs: 30, hint: 'Branche et état du dépôt' },
+  { label: 'IP', kind: 'command', icon: '🌐', command: 'curl -s https://api.ipify.org', interval_secs: 600, hint: 'Votre adresse IP publique' },
+  { label: 'Notes', kind: 'launcher', icon: '📝', target: 'notepad.exe', hint: 'Ouvre le Bloc-notes' },
+];
+const customSlug = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20) || 'widget';
+function newCustomId(label) {
+  const base = customSlug(label), taken = new Set([...S.widgets, ...(cfg.custom || []).map((c) => c.id)]);
+  let id = base, n = 2;
+  while (taken.has(id)) id = base + '-' + n++;
+  return id;
+}
+function customCard(c, i) {
+  const upd = () => { touch(); };
+  const isCmd = c.kind === 'command', isText = c.kind === 'text';
+  const placed = usedWidgetsSafe().includes(c.id);
+  return h('div', { class: 'panel' }, h('h2', {}, (c.icon && !/^[0-9a-f]{2,5}$/i.test(c.icon) ? c.icon + ' ' : '') + (c.label || c.id)),
+    h('p', { class: 'hint desc' }, 'Identifiant : ' + c.id + (placed ? ' · affiché dans la barre' : ' · pas encore placé dans la barre')),
+    h('div', { class: 'row' },
+      txt(c, 'label', 'Libellé', { cb: () => { upd(); } }),
+      pick(c, 'kind', 'Type', CUSTOM_KINDS, () => { touch(); setTab('custom'); }),
+      txt(c, 'icon', 'Icône (emoji ou code Segoe, ex. E80F)', { ph: '📁', cb: upd }),
+      isCmd ? num(c, 'interval_secs', 'Relancer toutes les (s)', { min: 2, max: 86400, cb: upd }) : null),
+    isCmd ? h('div', { class: 'row' }, txt(c, 'command', 'Commande (exécutée avec vos droits)', { ph: 'git status -sb', cb: upd })) : null,
+    h('div', { class: 'row' }, txt(c, 'target', isText || isCmd ? 'Ouvrir au clic (facultatif)' : 'Programme, dossier ou adresse', { ph: 'https://… ou C:\\…', cb: upd })),
+    h('div', { class: 'row' },
+      placed ? null : h('button', { class: 'primary', onclick: () => { layoutLoad(); moveWidget(c.id, 0, 'right', 999); } }, 'Placer dans la barre'),
+      h('button', { class: 'danger', onclick: () => {
+        if (!confirm('Supprimer le widget « ' + (c.label || c.id) + ' » ?')) return;
+        for (const s of cfg.screen) {
+          for (const k of ['left', 'center', 'right']) { s.layout[k] = s.layout[k].filter((x) => x !== c.id); s.layout.row2[k] = s.layout.row2[k].filter((x) => x !== c.id); }
+          delete s.styles[c.id]; delete s.show_when[c.id]; if (s.offsets) delete s.offsets[c.id];
+        }
+        cfg.custom.splice(i, 1); S.widgets = S.widgets.filter((x) => x !== c.id); touch(); setTab('custom');
+      } }, 'Supprimer')));
+}
+function usedWidgetsSafe() {
+  const lay = cfg.screen[sel].layout;
+  return ['left', 'center', 'right'].flatMap((k) => [...lay[k], ...lay.row2[k]]);
+}
+function addCustom(tpl) {
+  cfg.custom = cfg.custom || [];
+  const c = Object.assign({ id: '', kind: 'text', label: '', icon: '', command: '', interval_secs: 30, target: '' }, tpl);
+  delete c.hint;
+  c.id = newCustomId(c.label || 'widget');
+  cfg.custom.push(c);
+  S.widgets.push(c.id);
+  touch();
+  setTab('custom');
+}
+function pageCustom() {
+  cfg.custom = cfg.custom || [];
+  return [
+    h('div', { class: 'panel' }, h('h2', {}, 'Créer un widget'),
+      h('p', { class: 'hint desc' }, 'Ajoutez à la barre ce que vous voulez : un raccourci, le résultat d\'une commande, un texte. Partez d\'un exemple ou d\'un widget vide.'),
+      h('div', { class: 'chips' }, CUSTOM_EXAMPLES.map((e) => h('button', { class: 'chip', title: e.hint, onclick: () => addCustom(e) }, (e.icon || '＋') + ' ' + e.label + ' — ' + e.hint)),
+        h('button', { class: 'chip', onclick: () => addCustom({ label: 'Mon widget', kind: 'text' }) }, '＋ Widget vide')),
+      h('p', { class: 'hint' }, 'Sécurité : une commande s\'exécute avec vos droits, comme si vous la tapiez dans un terminal. Ne collez que des commandes que vous comprenez.')),
+    cfg.custom.length ? cfg.custom.map(customCard) : h('p', { class: 'hint' }, 'Aucun widget personnalisé pour l\'instant.'),
+  ];
+}
+
 // ---------- pages : général, météo, presse-papiers ----------
 const desc = (t) => h('p', { class: 'hint desc' }, t);
 function pageGeneral() {
@@ -226,6 +292,7 @@ const ICONS = {
   claude: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
   weather: 'M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z',
   clipboard: 'M9 3h6v3H9zM6 5h3M15 5h3v16H6V5z',
+  custom: 'M12 5v14M5 12h14M4 4h16v16H4z',
   general: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4',
 };
 // [id, libellé, page, groupe, sous-titre]
@@ -234,6 +301,7 @@ const TABS = [
   ['editor', 'Éditeur de thème', pageEditor, 'Apparence', 'Créez votre propre thème à partir d\'un existant.'],
   ['layout', 'Disposition', pageLayout, 'Barre', 'Quels widgets, dans quelle zone, avec quel style et quel décalage.'],
   ['screens', 'Écrans et position', pageScreens, 'Barre', 'Bord, taille, mode et thème de la barre sur chaque écran.'],
+  ['custom', 'Widgets personnalisés', pageCustom, 'Barre', 'Vos propres widgets : lanceurs, commandes, textes.'],
   ['claude', 'HUD Claude', pageClaude, 'Intégrations', 'Consommation, budgets, alertes et clé Admin API.'],
   ['weather', 'Météo', pageWeather, 'Intégrations', 'Conditions actuelles dans la barre.'],
   ['clipboard', 'Presse-papiers', pageClipboard, 'Intégrations', 'Historique rapide des derniers textes copiés.'],

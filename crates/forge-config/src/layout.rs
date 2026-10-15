@@ -88,7 +88,18 @@ pub const ALL: &[&str] = &[
     "battery",
     "clock",
     "toggle",
+    "date",
+    "uptime",
+    "memory",
+    "ping",
+    "diskio",
+    "keyboard",
+    "mic",
+    "timer",
 ];
+
+/// Widgets facultatifs : jamais ajoutés d'office à une disposition écrite à la main (voir `adopt_new_widgets`).
+pub const OPTIONAL: &[&str] = &["date", "uptime", "memory", "ping", "diskio", "keyboard", "mic", "timer"];
 
 /// Widgets qui existaient avant l'introduction de `Layout::seen` (0.5.0) : une disposition ancienne les connaît.
 const LEGACY: &[&str] = &[
@@ -128,7 +139,9 @@ impl Layout {
             if self.seen.is_empty() { LEGACY.iter().map(|s| s.to_string()).collect() } else { self.seen.clone() };
         let mut changed = false;
         if hand_written {
-            for id in ALL.iter().filter(|id| !seen.iter().any(|s| s == *id) && !placed.iter().any(|p| p == *id)) {
+            for id in ALL.iter().filter(|id| {
+                !OPTIONAL.contains(id) && !seen.iter().any(|s| s == *id) && !placed.iter().any(|p| p == *id)
+            }) {
                 match *id {
                     "apps" => {
                         let at = self.left.iter().position(|w| w == "desktop").map_or(0, |i| i + 1);

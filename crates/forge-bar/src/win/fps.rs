@@ -28,8 +28,14 @@ pub const STATE_DENIED: u8 = 2;
 pub const STATE_FAILED: u8 = 3;
 static STATE: AtomicU8 = AtomicU8::new(STATE_IDLE);
 
-/// (processus, présentations) depuis le dernier relevé.
-static COUNTS: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
+/// (processus, chaîne d'échange, présentations) depuis le dernier relevé. Une chaîne d'échange = une fenêtre de rendu :
+/// un jeu avec surcouche (Steam, Discord, NVIDIA…) en a deux, et seule celle du jeu doit compter.
+static COUNTS: Mutex<Vec<(u32, u64, u32)>> = Mutex::new(Vec::new());
+
+/// `DXGI_PRESENT_TEST` : appel qui ne présente rien (test d'occultation), fait par beaucoup de jeux à chaque image.
+const DXGI_PRESENT_TEST: u32 = 0x1;
+/// `EVENT_HEADER_FLAG_32_BIT_HEADER` : processus 32 bits, pointeurs de 4 octets dans les données de l'événement.
+const HEADER_32_BIT: u16 = 0x20;
 
 pub fn state() -> u8 {
     STATE.load(Ordering::Relaxed)
@@ -41,10 +47,26 @@ unsafe extern "system" fn on_event(rec: *mut EVENT_RECORD) {
     if !((h.ProviderId == DXGI && id == 42) || (h.ProviderId == D3D9 && id == 1)) {
         return;
     }
+    // Données de l'événement : pointeur de la chaîne d'échange, puis les indicateurs de l'appel (comme PresentMon).
+    let ptr = if h.Flags & HEADER_32_BIT != 0 { 4 } else { 8 };
+    let len = (*rec).UserDataLength as usize;
+    if (*rec).UserData.is_null() || len < ptr + 4 {
+        return;
+    }
+    let data = std::slice::from_raw_parts((*rec).UserData as *const u8, len);
+    let mut chain = [0u8; 8];
+    chain[..ptr].copy_from_slice(&data[..ptr]);
+    let chain = u64::from_le_bytes(chain);
+    if h.ProviderId == DXGI {
+        let flags = u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]]);
+        if flags & DXGI_PRESENT_TEST != 0 {
+            return;
+        }
+    }
     if let Ok(mut v) = COUNTS.lock() {
-        match v.iter_mut().find(|(p, _)| *p == h.ProcessId) {
-            Some((_, n)) => *n += 1,
-            None => v.push((h.ProcessId, 1)),
+        match v.iter_mut().find(|(p, c, _)| *p == h.ProcessId && *c == chain) {
+            Some((_, _, n)) => *n += 1,
+            None => v.push((h.ProcessId, chain, 1)),
         }
     }
 }
@@ -161,7 +183,8 @@ pub fn stop() {
 /// Appelé une fois par seconde : le compteur est remis à zéro.
 pub fn sample(fg_pid: u32) -> Option<u32> {
     let counts = std::mem::take(&mut *COUNTS.lock().ok()?);
-    counts.iter().find(|(p, _)| *p == fg_pid).map(|(_, n)| *n).filter(|n| *n >= 5)
+    // Plusieurs chaînes dans le même processus (jeu + surcouche) : la plus active est celle du jeu.
+    counts.iter().filter(|(p, _, _)| *p == fg_pid).map(|(_, _, n)| *n).max().filter(|n| *n >= 5)
 }
 
 #[cfg(test)]

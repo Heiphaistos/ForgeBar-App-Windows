@@ -4,8 +4,8 @@
 
 use crate::weather;
 use forge_claude::{fmt_tokens, Summary};
-use forge_config::{ClaudeConfig, Condition};
-use std::collections::VecDeque;
+use forge_config::{ClaudeConfig, Condition, CustomKind, CustomWidget};
+use std::collections::{HashMap, VecDeque};
 
 /// Glyphes Segoe Fluent Icons (Windows 11) et Segoe MDL2 Assets (Windows 10).
 pub mod glyph {
@@ -17,6 +17,11 @@ pub mod glyph {
     pub const BATTERY: char = '\u{E83F}';
     pub const CLIPBOARD: char = '\u{E77F}';
     pub const HIDE: char = '\u{E70D}';
+    pub const CALENDAR: char = '\u{E787}';
+    pub const KEYBOARD: char = '\u{E765}';
+    pub const MIC: char = '\u{E720}';
+    pub const STOPWATCH: char = '\u{E916}';
+    pub const PING: char = '\u{E968}';
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +152,22 @@ pub struct SysData {
     pub apps: Vec<AppWin>,
     pub clock: String,
     pub hist: History,
+    /// Secondes depuis le démarrage de Windows.
+    pub uptime_secs: u64,
+    /// Mémoire vive (utilisée, totale) en Go.
+    pub memory: Option<(f32, f32)>,
+    /// Latence TCP vers Cloudflare en ms ; `None` tant qu'elle n'est pas mesurée ou si le réseau est coupé.
+    pub ping_ms: Option<u32>,
+    /// Activité des disques en octets par seconde.
+    pub disk_io: Option<f64>,
+    /// Disposition du clavier au premier plan (« FR », « EN »…).
+    pub keyboard: String,
+    /// Micro par défaut : `Some(true)` = coupé ; `None` sans micro.
+    pub mic_muted: Option<bool>,
+    /// Minuteur / chronomètre : texte et état (en marche) ; `None` si le widget n'est pas utilisé.
+    pub timer: Option<(String, bool)>,
+    /// Dernière sortie des widgets personnalisés de type commande, par identifiant.
+    pub custom_out: HashMap<String, String>,
 }
 
 fn level_for(pct: f32, warn: f32, crit: f32) -> Level {
@@ -277,7 +298,49 @@ pub struct Inputs<'a> {
     pub sys: &'a SysData,
     pub claude: &'a Summary,
     pub cfg: &'a ClaudeConfig,
+    pub custom: &'a [CustomWidget],
     pub icons_only: bool,
+}
+
+const DAYS: [&str; 7] = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."];
+const MONTHS: [&str; 12] =
+    ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+
+/// « mer. 15 oct. », en français quelle que soit la langue de Windows.
+pub fn french_date(d: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    format!("{} {} {}", DAYS[d.weekday().num_days_from_monday() as usize], d.day(), MONTHS[d.month0() as usize])
+}
+
+/// « 3 j 4 h », « 2 h 15 », « 12 min ».
+pub fn fmt_uptime(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs % 86_400 / 3600, secs % 3600 / 60);
+    if d > 0 {
+        format!("{d} j {h} h")
+    } else if h > 0 {
+        format!("{h} h {m:02}")
+    } else {
+        format!("{m} min")
+    }
+}
+
+/// Segment d'un widget personnalisé : libellé, sortie de la commande, emoji ou glyphe Segoe.
+fn custom_segment(id: &str, c: &CustomWidget, sys: &SysData, hide: &dyn Fn(String) -> String) -> Segment {
+    let icon = c.glyph();
+    let body = match c.kind {
+        CustomKind::Command => sys.custom_out.get(id).cloned().unwrap_or_else(|| "…".into()),
+        _ => c.label.clone(),
+    };
+    let text = if c.kind == CustomKind::Command && !c.label.is_empty() { format!("{} {body}", c.label) } else { body };
+    // Les glyphes Segoe sont dessinés par la police d'icônes ; un emoji ou un symbole passe dans le texte.
+    let segoe = icon.is_some_and(|g| ('\u{E000}'..='\u{F8FF}').contains(&g));
+    let (icon_char, text) = match icon {
+        Some(g) if segoe => (Some(g), text),
+        Some(g) => (None, if text.is_empty() { g.to_string() } else { format!("{g} {text}") }),
+        None => (None, text),
+    };
+    let short = text.clone();
+    seg(id, "", icon_char, hide(truncate(&text, 48)), hide(truncate(&short, 48)), Level::Normal)
 }
 
 fn seg(id: &str, svg: &'static str, icon: Option<char>, text: String, short: String, level: Level) -> Segment {
@@ -345,6 +408,77 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
             (!parts.is_empty()).then(|| seg(id, "temp", None, hide(text), hide(short), level_for(hottest, 80.0, 90.0)))
         }
         "toggle" => Some(seg(id, "toggle", Some(glyph::HIDE), String::new(), String::new(), Level::Secondary)),
+        "date" => {
+            let t = french_date(chrono::Local::now().date_naive());
+            Some(seg(id, "date", Some(glyph::CALENDAR), hide(t.clone()), hide(t), Level::Normal))
+        }
+        "uptime" => {
+            let t = fmt_uptime(sys.uptime_secs);
+            Some(seg(id, "uptime", None, hide(format!("↑ {t}")), hide(t), Level::Normal))
+        }
+        "memory" => {
+            let (used, total) = sys.memory?;
+            let t = format!("{used:.1}/{total:.0} Go").replace('.', ",");
+            let mut s = seg(
+                id,
+                "ram",
+                None,
+                hide(format!("RAM {t}")),
+                hide(t),
+                level_for(used / total.max(0.1) * 100.0, 85.0, 95.0),
+            );
+            s.value = Some(used / total.max(0.1) * 100.0);
+            Some(s)
+        }
+        "ping" => {
+            let (t, lvl) = match sys.ping_ms {
+                Some(ms) => (
+                    format!("{ms} ms"),
+                    if ms > 250 {
+                        Level::Critical
+                    } else if ms > 100 {
+                        Level::Warning
+                    } else {
+                        Level::Normal
+                    },
+                ),
+                None => ("—".to_string(), Level::Secondary),
+            };
+            Some(seg(id, "ping", Some(glyph::PING), hide(format!("Ping {t}")), hide(t), lvl))
+        }
+        "diskio" => {
+            let t = fmt_rate(sys.disk_io?);
+            Some(seg(id, "diskio", None, hide(format!("E/S {t}")), hide(t), Level::Normal))
+        }
+        "keyboard" => {
+            if sys.keyboard.is_empty() {
+                return None;
+            }
+            Some(seg(
+                id,
+                "keyboard",
+                Some(glyph::KEYBOARD),
+                hide(sys.keyboard.clone()),
+                hide(sys.keyboard.clone()),
+                Level::Normal,
+            ))
+        }
+        "mic" => {
+            let muted = sys.mic_muted?;
+            let (t, lvl) = if muted { ("Micro coupé", Level::Critical) } else { ("Micro", Level::Normal) };
+            Some(seg(id, "mic", Some(glyph::MIC), hide(t.to_string()), hide(String::new()), lvl))
+        }
+        "timer" => {
+            let (t, running) = sys.timer.clone()?;
+            Some(seg(
+                id,
+                "timer",
+                Some(glyph::STOPWATCH),
+                hide(t.clone()),
+                hide(t),
+                if running { Level::Accent } else { Level::Secondary },
+            ))
+        }
         "apps" if !sys.apps.is_empty() => Some(seg(id, "apps", None, String::new(), String::new(), Level::Normal)),
         "net" => {
             let (down, up) = sys.net?;
@@ -378,7 +512,7 @@ pub fn build(id: &str, inp: &Inputs) -> Option<Segment> {
             let (t, lvl) = claude_text(claude, cfg);
             Some(seg(id, "claude", None, format!("✦ {t}"), t, lvl))
         }
-        _ => None,
+        _ => inp.custom.iter().find(|c| c.id == id).map(|c| custom_segment(id, c, sys, &hide)),
     }
 }
 
@@ -388,14 +522,29 @@ mod tests {
     use forge_claude::{Session, Totals};
 
     fn inputs<'a>(sys: &'a SysData, s: &'a Summary, cfg: &'a ClaudeConfig, icons_only: bool) -> Inputs<'a> {
-        Inputs { sys, claude: s, cfg, icons_only }
+        Inputs { sys, claude: s, cfg, custom: &[], icons_only }
     }
 
     #[test]
     fn hides_missing_hardware() {
         let (sys, cfg, s) = (SysData::default(), ClaudeConfig::default(), Summary::default());
         let i = inputs(&sys, &s, &cfg, false);
-        for id in ["battery", "wifi", "gpu", "temp", "disk", "apps", "net", "weather", "media", "clipboard"] {
+        for id in [
+            "battery",
+            "wifi",
+            "gpu",
+            "temp",
+            "disk",
+            "apps",
+            "memory",
+            "diskio",
+            "mic",
+            "timer",
+            "net",
+            "weather",
+            "media",
+            "clipboard",
+        ] {
             assert!(build(id, &i).is_none(), "{id}");
         }
         assert!(build("cpu", &i).is_some());
@@ -455,6 +604,40 @@ mod tests {
         assert!(visible(&Condition::parse("battery<20").unwrap(), &sys, &s));
         assert!(!visible(&Condition::parse("battery<10").unwrap(), &sys, &s));
         assert!(!visible(&Condition::parse("gpu>10").unwrap(), &sys, &s), "métrique indisponible = masqué");
+    }
+
+    #[test]
+    fn french_dates_and_uptime() {
+        assert_eq!(french_date(chrono::NaiveDate::from_ymd_opt(2026, 10, 15).unwrap()), "jeu. 15 oct.");
+        assert_eq!(fmt_uptime(3 * 86_400 + 4 * 3600), "3 j 4 h");
+        assert_eq!(fmt_uptime(2 * 3600 + 15 * 60), "2 h 15");
+        assert_eq!(fmt_uptime(720), "12 min");
+    }
+
+    #[test]
+    fn custom_widgets_show_command_output_and_label() {
+        let (cfg, s) = (ClaudeConfig::default(), Summary::default());
+        let custom = vec![
+            CustomWidget {
+                id: "git".into(),
+                kind: CustomKind::Command,
+                label: "Git".into(),
+                ..CustomWidget::default()
+            },
+            CustomWidget {
+                id: "doc".into(),
+                kind: CustomKind::Launcher,
+                label: "Docs".into(),
+                icon: "📁".into(),
+                ..CustomWidget::default()
+            },
+        ];
+        let mut sys = SysData::default();
+        sys.custom_out.insert("git".into(), "main ≡".into());
+        let i = Inputs { sys: &sys, claude: &s, cfg: &cfg, custom: &custom, icons_only: false };
+        assert_eq!(build("git", &i).unwrap().text, "Git main ≡");
+        assert_eq!(build("doc", &i).unwrap().text, "📁 Docs");
+        assert!(build("inconnu", &i).is_none());
     }
 
     #[test]

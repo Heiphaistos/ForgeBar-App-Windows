@@ -8,17 +8,20 @@ mod clipboard;
 mod cred;
 mod events;
 mod fps;
+mod gameguard;
 mod http;
 mod icons;
 mod log;
 mod media;
 mod metrics;
 mod panel;
+mod probes;
 mod render;
 pub mod snapshot;
 mod speedtest;
 mod sys;
 mod thermal;
+mod timer;
 mod tray;
 mod updater;
 mod wallpaper;
@@ -61,6 +64,7 @@ pub(crate) const WM_APP_WEATHER: u32 = WM_APP + 7;
 pub(crate) const WM_APP_CLOSE_PANEL: u32 = WM_APP + 8;
 pub(crate) const WM_APP_SPEED: u32 = WM_APP + 9;
 pub(crate) const WM_APP_UPDATE: u32 = WM_APP + 10;
+pub(crate) const WM_APP_PROBE: u32 = WM_APP + 11;
 pub(crate) const HOTKEY_TOGGLE: i32 = 1;
 pub(crate) const TIMER_TICK: usize = 1;
 pub(crate) const TIMER_CONFIG: usize = 2;
@@ -108,6 +112,12 @@ pub(crate) struct App {
     pub update: updater::Shared,
     /// Dernière version annoncée pour une copie qui ne peut pas s'installer seule (évite de répéter la bulle).
     pub update_notified: Option<String>,
+    pub probes: probes::Probes,
+    pub timer: timer::Timer,
+    /// Origine de l'horloge du minuteur.
+    pub epoch: Instant,
+    pub want_timer: bool,
+    pub guard: gameguard::GameGuard,
 }
 
 thread_local! {
@@ -280,6 +290,7 @@ impl App {
         self.sampler.want_disk = layout_uses(&self.cfg, "disk");
         self.sampler.want_apps = layout_uses(&self.cfg, "apps");
         self.sampler.want_temp = layout_uses(&self.cfg, "temp");
+        self.apply_widget_needs();
         if layout_uses(&self.cfg, "fps") {
             fps::start();
         }
@@ -351,16 +362,38 @@ impl App {
     pub(crate) fn raise_bars(&self) {
         for b in self.bars.iter().filter(|b| !b.off) {
             unsafe {
-                let _ = SetWindowPos(
-                    b.hwnd,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                );
+                let _ = SetWindowPos(b.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
+        }
+    }
+
+    /// Barre visible en jeu (réglage « Afficher la barre dans les jeux ») sans gêner le jeu : voir `gameguard`.
+    pub(crate) fn tune_for_games(&mut self) {
+        use gameguard::Action;
+        if self.cfg.general.hide_on_fullscreen {
+            return; // Windows masque déjà la barre en plein écran
+        }
+        let action = self.guard.update(self.epoch.elapsed(), self.sampler.game_mode, sys::exclusive_fullscreen());
+        match action {
+            Action::Hide => {
+                log::info("plein écran exclusif ou instable : la barre se retire pour ne pas gêner le jeu");
+                for b in self.bars.iter().filter(|b| !b.off) {
+                    unsafe {
+                        let _ = ShowWindow(b.hwnd, SW_HIDE);
+                    }
+                }
+            }
+            Action::Show => {
+                log::info("jeu terminé ou calme : la barre revient");
+                for b in self.bars.iter().filter(|b| !b.off) {
+                    unsafe {
+                        let _ = ShowWindow(b.hwnd, SW_SHOWNOACTIVATE);
+                    }
+                }
+                self.raise_bars();
+            }
+            Action::Raise => self.raise_bars(),
+            Action::Nothing => {}
         }
     }
 
@@ -379,8 +412,29 @@ impl App {
         }
     }
 
+    /// Ce que les widgets présents dans les dispositions demandent à mesurer (rien n'est relevé pour un widget absent).
+    pub(crate) fn apply_widget_needs(&mut self) {
+        let any = |ids: &[&str]| ids.iter().any(|id| layout_uses(&self.cfg, id));
+        self.sampler.want_misc = any(&["uptime", "keyboard"]) || layout_uses(&self.cfg, "memory");
+        self.sampler.want_diskio = layout_uses(&self.cfg, "diskio");
+        self.sampler.want_mic = layout_uses(&self.cfg, "mic");
+        self.want_timer = layout_uses(&self.cfg, "timer");
+        self.probes.want_ping.store(layout_uses(&self.cfg, "ping"), Ordering::Relaxed);
+        *self.probes.commands.lock().unwrap() =
+            self.cfg.custom.iter().filter(|c| layout_uses(&self.cfg, &c.id)).cloned().collect();
+    }
+
     /// Recopie les données des fils de fond dans les mesures affichées.
     pub(crate) fn sync_shared(&mut self) {
+        self.sampler.data.ping_ms = self.probes.ping();
+        self.sampler.data.custom_out = self.probes.out.lock().unwrap().clone();
+        let now = self.epoch.elapsed();
+        if self.want_timer {
+            if self.timer.finished(now) {
+                tray::info(self.main, "Minuteur", "Le temps est écoulé.");
+            }
+            self.sampler.data.timer = Some((self.timer.text(now), self.timer.running()));
+        }
         self.sampler.data.media = self.media.lock().unwrap().clone();
         self.sampler.data.weather = self.weather.lock().unwrap().clone();
     }
@@ -396,6 +450,8 @@ impl App {
 pub fn run() -> Result<()> {
     unsafe {
         let _mutex = CreateMutexW(None, true, w!("Local\\ForgeBar.SingleInstance"))?;
+        log::enable();
+        log::info(&format!("démarrage de Forge Bar {}", env!("CARGO_PKG_VERSION")));
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return Ok(());
         }
@@ -480,9 +536,15 @@ pub fn run() -> Result<()> {
             speed_last: None,
             update: updater::Shared::default(),
             update_notified: None,
+            probes: probes::Probes::default(),
+            timer: timer::Timer::default(),
+            epoch: Instant::now(),
+            want_timer: false,
+            guard: gameguard::GameGuard::default(),
         };
         app.update.enabled.store(app.cfg.general.auto_update, Ordering::Relaxed);
         let update = app.update.clone();
+        let probes = app.probes.clone();
         app.sampler.watch_audio(main.0 as isize, WM_APP_AUDIO);
         app.sync_clipboard_listener();
         app.sampler.want_gpu = layout_uses(&app.cfg, "gpu");
@@ -490,6 +552,7 @@ pub fn run() -> Result<()> {
         app.sampler.want_disk = layout_uses(&app.cfg, "disk");
         app.sampler.want_apps = layout_uses(&app.cfg, "apps");
         app.sampler.want_temp = layout_uses(&app.cfg, "temp");
+        app.apply_widget_needs();
         app.sampler.sample();
         APP.with(|cell| *cell.borrow_mut() = Some(app));
         with_app(|app| app.rebuild());
@@ -500,6 +563,7 @@ pub fn run() -> Result<()> {
         workers::spawn_weather(main, WM_APP_WEATHER, weather, weather_cfg, weather_wake);
         media::spawn(main, WM_APP_MEDIA, media);
         updater::spawn(main, WM_APP_UPDATE, &update);
+        probes::spawn(main, WM_APP_PROBE, &probes);
         tray::add(main);
         // Ctrl + Alt + B : afficher / masquer la barre. Silencieux si une autre application a déjà pris la combinaison.
         let _ = RegisterHotKey(main, HOTKEY_TOGGLE, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'B' as u32);

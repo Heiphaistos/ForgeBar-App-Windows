@@ -3,7 +3,7 @@
 
 use super::apps::Windows;
 use super::audio::{self, DeviceWatcher, VolumeWatcher};
-use super::metrics::{Gpu, Net};
+use super::metrics::{DiskIo, Gpu, Net};
 use super::thermal::Thermal;
 use crate::widgets::{SysData, Wifi};
 use windows::core::{w, PCWSTR};
@@ -60,6 +60,12 @@ pub struct Sampler {
     pub want_disk: bool,
     pub want_apps: bool,
     pub want_temp: bool,
+    /// Uptime, mémoire en Go, clavier : mesures quasi gratuites, relevées seulement si un widget les affiche.
+    pub want_misc: bool,
+    pub want_diskio: bool,
+    pub want_mic: bool,
+    disk_io: DiskIo,
+    capture: Option<IAudioEndpointVolume>,
     /// Mode jeu : une application plein écran est au premier plan, on ne touche plus aux autres fenêtres.
     pub game_mode: bool,
     thermal: Thermal,
@@ -132,6 +138,16 @@ impl Sampler {
         if self.want_disk && self.ticks % 10 == 1 {
             self.data.disk = system_drive_usage();
         }
+        if self.want_misc {
+            self.data.uptime_secs = unsafe { windows::Win32::System::SystemInformation::GetTickCount64() } / 1000;
+            self.data.keyboard = keyboard_layout();
+        }
+        if self.want_diskio {
+            self.data.disk_io = self.disk_io.sample();
+        }
+        if self.want_mic && self.ticks.is_multiple_of(2) {
+            self.data.mic_muted = self.capture_endpoint().and_then(|ep| unsafe { Some(ep.GetMute().ok()?.as_bool()) });
+        }
         self.game_mode = foreground_is_fullscreen();
         self.data.apps = if self.want_apps && !self.game_mode { self.windows.list() } else { Vec::new() };
         if self.want_temp && self.ticks % 3 == 1 {
@@ -165,6 +181,8 @@ impl Sampler {
         let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
         if unsafe { GlobalMemoryStatusEx(&mut m) }.is_ok() {
             self.data.ram = m.dwMemoryLoad as f32;
+            let gb = |b: u64| b as f32 / 1_073_741_824.0;
+            self.data.memory = Some((gb(m.ullTotalPhys - m.ullAvailPhys), gb(m.ullTotalPhys)));
         }
     }
 
@@ -191,6 +209,30 @@ impl Sampler {
             };
         }
         self.audio.as_ref().map(|e| &e.volume)
+    }
+
+    /// Micro par défaut (lecture et coupure seulement : aucun flux audio n'est ouvert).
+    fn capture_endpoint(&mut self) -> Option<&IAudioEndpointVolume> {
+        if self.capture.is_none() {
+            self.capture = unsafe {
+                let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+                let dev = en.GetDefaultAudioEndpoint(windows::Win32::Media::Audio::eCapture, eConsole).ok()?;
+                dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok()
+            };
+        }
+        self.capture.as_ref()
+    }
+
+    pub fn toggle_mic_mute(&mut self) {
+        if let Some(ep) = self.capture_endpoint() {
+            unsafe {
+                if let Ok(m) = ep.GetMute() {
+                    let _ = ep.SetMute(!m.as_bool(), std::ptr::null());
+                }
+            }
+        }
+        self.capture = None; // le micro par défaut a pu changer : on le relit
+        self.data.mic_muted = self.capture_endpoint().and_then(|ep| unsafe { Some(ep.GetMute().ok()?.as_bool()) });
     }
 
     fn sample_volume(&mut self) {
@@ -320,6 +362,38 @@ fn foreground_is_fullscreen() -> bool {
         let m = mi.rcMonitor;
         let covers = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
         covers && GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION.0 != WS_CAPTION.0
+    }
+}
+
+/// Vrai si un jeu Direct3D est en plein écran exclusif (Windows dit alors « QUNS_RUNNING_D3D_FULL_SCREEN »).
+pub fn exclusive_fullscreen() -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
+    unsafe { SHQueryUserNotificationState() }.is_ok_and(|s| s == QUNS_RUNNING_D3D_FULL_SCREEN)
+}
+
+/// Langue de la disposition de clavier du premier plan : « FR », « EN »…
+fn keyboard_layout() -> String {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    let lang = unsafe {
+        let tid = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        (GetKeyboardLayout(tid).0 as usize & 0x3FF) as u32
+    };
+    match lang {
+        0x0C => "FR".into(),
+        0x09 => "EN".into(),
+        0x07 => "DE".into(),
+        0x0A => "ES".into(),
+        0x10 => "IT".into(),
+        0x16 => "PT".into(),
+        0x13 => "NL".into(),
+        0x19 => "RU".into(),
+        0x15 => "PL".into(),
+        0x1D => "SV".into(),
+        0x04 => "ZH".into(),
+        0x11 => "JA".into(),
+        0x12 => "KO".into(),
+        other => format!("{other:02X}"),
     }
 }
 

@@ -4,8 +4,8 @@ use super::bar::{Ctx, WM_APPBAR};
 use super::panel::{Kind, Panel};
 use super::{
     apps, clipboard, speedtest, sys, tray, updater, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE,
-    TIMER_CONFIG, TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD,
-    WM_APP_SPEED, WM_APP_UPDATE, WM_APP_WEATHER,
+    TIMER_CONFIG, TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_PROBE,
+    WM_APP_REBUILD, WM_APP_SPEED, WM_APP_UPDATE, WM_APP_WEATHER,
 };
 use crate::calendar;
 use crate::content::{self, Action};
@@ -29,6 +29,13 @@ const MENU_HIDE_BAR: usize = 14;
 const MENU_UPDATE: usize = 15;
 const MENU_FPS_ALLOW: usize = 16;
 const MENU_IN_GAME: usize = 17;
+const MENU_MIC: usize = 70;
+const MENU_TIMER_TOGGLE: usize = 71;
+const MENU_TIMER_RESET: usize = 72;
+const MENU_TIMER_STOPWATCH: usize = 73;
+/// Minuteurs : 200 + durée en minutes.
+const MENU_TIMER_MIN: usize = 200;
+const TIMER_CHOICES: [u64; 6] = [5, 10, 15, 25, 45, 60];
 const MENU_MUTE: usize = 20;
 const MENU_MIXER: usize = 21;
 const MENU_SOUND_SETTINGS: usize = 22;
@@ -94,7 +101,7 @@ impl App {
             _ => "clipboard",
         };
         let b = &self.bars[bar];
-        let Some(anchor) = b.cell_on_screen(id) else { return };
+        let Some(anchor) = b.cell_on_screen(id).or_else(|| b.cell_on_screen("date")) else { return };
         let today = chrono::Local::now().date_naive();
         let month = (today.year(), today.month());
         let scene = self.popup_scene(kind, month);
@@ -181,6 +188,20 @@ fn click(hwnd: HWND, x: i32, y: i32) {
         "battery" => sys::open(w!("ms-settings:batterysaver")),
         "cpu" | "ram" | "gpu" => sys::open(w!("taskmgr.exe")),
         "disk" => sys::open(w!("ms-settings:storagesense")),
+        "memory" | "diskio" => sys::open(w!("taskmgr.exe")),
+        "date" => {
+            with_app(|app| app.toggle_popup(i, Kind::Calendar));
+        }
+        "mic" => {
+            with_app(|app| app.sampler.toggle_mic_mute());
+        }
+        "timer" => {
+            with_app(|app| {
+                let now = app.epoch.elapsed();
+                app.timer.toggle(now);
+                app.sync_shared();
+            });
+        }
         "media" => sys::media_key(0xB3),
         "toggle" => {
             with_app(|app| app.toggle_bars());
@@ -198,9 +219,23 @@ fn click(hwnd: HWND, x: i32, y: i32) {
         "clipboard" => {
             with_app(|app| app.toggle_popup(i, Kind::Clipboard));
         }
-        _ => return,
+        other => {
+            click_custom(other);
+            return;
+        }
     }
     with_app(|app| app.invalidate());
+}
+
+/// Clic sur un widget personnalisé : ouvre sa cible, ou relance sa commande.
+fn click_custom(id: &str) {
+    let Some(c) = with_app(|app| app.cfg.custom.iter().find(|c| c.id == id).cloned()).flatten() else { return };
+    if !c.target.trim().is_empty() {
+        let target = HSTRING::from(c.target.trim());
+        sys::open(PCWSTR(target.as_ptr()));
+    } else if c.kind == forge_config::CustomKind::Command {
+        with_app(|app| app.probes.refresh.lock().unwrap().push(c.id.clone()));
+    }
 }
 
 fn add(menu: HMENU, id: usize, text: &str, flags: MENU_ITEM_FLAGS) {
@@ -258,6 +293,27 @@ fn widget_items(menu: HMENU, id: &str, app: &App) -> bool {
             }
             add(menu, 0, "Mesure passive : rien n'est injecté dans les jeux", MF_GRAYED);
         }
+        "mic" => {
+            let muted = app.sampler.data.mic_muted.unwrap_or(false);
+            add(menu, MENU_MIC, if muted { "Réactiver le micro" } else { "Couper le micro" }, none);
+            add(menu, MENU_SOUND_SETTINGS, "Paramètres du son…", none);
+        }
+        "timer" => {
+            let running = app.timer.running();
+            add(menu, MENU_TIMER_TOGGLE, if running { "Pause" } else { "Démarrer" }, none);
+            add(menu, MENU_TIMER_RESET, "Remettre à zéro", none);
+            add(menu, MENU_TIMER_STOPWATCH, "Chronomètre", none);
+            if let Ok(sub) = unsafe { CreatePopupMenu() } {
+                for m in TIMER_CHOICES {
+                    add(sub, MENU_TIMER_MIN + m as usize, &format!("{m} minutes"), none);
+                }
+                unsafe {
+                    let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, &HSTRING::from("Minuteur"));
+                }
+            }
+        }
+        "date" => add(menu, MENU_CALENDAR, "Afficher le calendrier", none),
+        c if app.cfg.custom.iter().any(|w| w.id == c) => add(menu, MENU_SETTINGS, "Modifier ce widget…", none),
         "wifi" => add(menu, MENU_WIFI, "Paramètres Wi-Fi…", none),
         "battery" => add(menu, MENU_BATTERY, "Paramètres de batterie…", none),
         "clock" => {
@@ -379,6 +435,27 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
                     with_app(|app| app.toggle_popup(i, kind));
                 }
             }
+            MENU_MIC => {
+                with_app(|app| app.sampler.toggle_mic_mute());
+            }
+            MENU_TIMER_TOGGLE | MENU_TIMER_RESET | MENU_TIMER_STOPWATCH => {
+                with_app(|app| {
+                    let now = app.epoch.elapsed();
+                    match cmd {
+                        MENU_TIMER_TOGGLE => app.timer.toggle(now),
+                        MENU_TIMER_RESET => app.timer.reset(),
+                        _ => app.timer.set_stopwatch(),
+                    }
+                    app.sync_shared();
+                });
+            }
+            c if (MENU_TIMER_MIN..MENU_TIMER_MIN + 100).contains(&c) => {
+                with_app(|app| {
+                    let now = app.epoch.elapsed();
+                    app.timer.start_countdown(std::time::Duration::from_secs((c - MENU_TIMER_MIN) as u64 * 60), now);
+                    app.sync_shared();
+                });
+            }
             MENU_PREV => sys::media_key(0xB1),
             MENU_PLAY => sys::media_key(0xB3),
             MENU_NEXT => sys::media_key(0xB0),
@@ -403,8 +480,16 @@ pub(super) unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, wp: WPARAM, 
             let painted = with_app(|app| {
                 let App { bars, d2d, dwrite, icon_font, sampler, cfg, claude, pack, .. } = app;
                 let summary = claude.lock().unwrap().clone();
-                let ctx =
-                    Ctx { d2d, dwrite, icon_font, sys: &sampler.data, claude: &summary, claude_cfg: &cfg.claude, pack };
+                let ctx = Ctx {
+                    d2d,
+                    dwrite,
+                    icon_font,
+                    sys: &sampler.data,
+                    claude: &summary,
+                    claude_cfg: &cfg.claude,
+                    custom: &cfg.custom,
+                    pack,
+                };
                 if let Some(b) = bars.iter_mut().find(|b| b.hwnd == hwnd) {
                     let _ = b.paint(&ctx);
                 }
@@ -574,6 +659,7 @@ fn on_update(app: &mut App) {
     use updater::Outcome;
     let manual = app.update.manual.load(std::sync::atomic::Ordering::Relaxed);
     let outcome = app.update.outcome.lock().unwrap().take();
+    super::log::info(&format!("mise à jour : {outcome:?}"));
     match outcome {
         Some(Outcome::Ready { version, msi }) => {
             let exe = super::exe_path();
@@ -609,9 +695,7 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
                 TIMER_TICK if !app.bars_off && app.bars.iter().any(|b| !b.hidden) => {
                     app.sync_shared();
                     app.sampler.sample();
-                    if !app.cfg.general.hide_on_fullscreen && app.sampler.game_mode {
-                        app.raise_bars();
-                    }
+                    app.tune_for_games();
                     app.invalidate();
                 }
                 TIMER_CONFIG => app.reload(false),
@@ -636,7 +720,7 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
             });
             LRESULT(0)
         }
-        WM_APP_MEDIA | WM_APP_WEATHER => {
+        WM_APP_PROBE | WM_APP_MEDIA | WM_APP_WEATHER => {
             with_app(|app| {
                 app.sync_shared();
                 app.invalidate();

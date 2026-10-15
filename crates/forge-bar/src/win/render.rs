@@ -278,7 +278,7 @@ impl Bar {
     ) -> Result<Vec<Item>> {
         self.ensure_fonts(ctx.dwrite, ctx.icon_font)?;
         let fonts = self.fonts.as_ref().expect("polices créées");
-        let inputs = Inputs { sys: ctx.sys, claude: ctx.claude, cfg: ctx.claude_cfg, icons_only };
+        let inputs = Inputs { sys: ctx.sys, claude: ctx.claude, cfg: ctx.claude_cfg, custom: ctx.custom, icons_only };
         let mut out = Vec::new();
         for id in ids {
             if let Some(cond) = self.conds.get(id) {

@@ -3,7 +3,9 @@
 
 use crate::cred;
 use crate::http::Response;
-use forge_config::{parse_color, Config, Layout, LayoutPreset, Theme, ThemeStore, Zones, ALL_WIDGETS};
+use forge_config::{
+    parse_color, Config, Layout, LayoutPreset, Theme, ThemeStore, Zones, ALL_WIDGETS, OPTIONAL_WIDGETS,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -163,11 +165,13 @@ pub fn state(ctx: &Ctx) -> Response {
         200,
         &json!({
             "ok": true,
+            "version": env!("CARGO_PKG_VERSION"),
             "config": cfg,
             "config_error": config_error,
             "config_path": ctx.config_path().display().to_string(),
             "themes": themes_json(ctx),
-            "widgets": ALL_WIDGETS,
+            "widgets": ALL_WIDGETS.iter().map(|w| w.to_string()).chain(cfg.custom.iter().map(|c| c.id.clone())).collect::<Vec<_>>(),
+            "optional_widgets": OPTIONAL_WIDGETS,
             "presets": presets_json(),
             "styles": STYLES,
             "claude_sources": CLAUDE_SOURCES,
@@ -180,8 +184,13 @@ pub fn state(ctx: &Ctx) -> Response {
     )
 }
 
-fn all_widgets(list: &[String], what: &str) -> Result<(), String> {
-    match list.iter().find(|w| !ALL_WIDGETS.contains(&w.as_str())) {
+/// Widget intégré ou personnalisé déclaré dans `[[custom]]`.
+fn known_widget(cfg: &Config, id: &str) -> bool {
+    ALL_WIDGETS.contains(&id) || cfg.custom.iter().any(|c| c.id == id)
+}
+
+fn all_widgets(cfg: &Config, list: &[String], what: &str) -> Result<(), String> {
+    match list.iter().find(|w| !known_widget(cfg, w)) {
         Some(w) => Err(format!("{what} : widget inconnu « {w} »")),
         None => Ok(()),
     }
@@ -211,18 +220,20 @@ pub fn check_config(cfg: &Config, theme_ids: &[String]) -> Result<(), String> {
         }
         let l = &s.layout;
         for (name, z) in [("left", &l.left), ("center", &l.center), ("right", &l.right)] {
-            all_widgets(z, &format!("écran {n}, zone {name}"))?;
+            all_widgets(cfg, z, &format!("écran {n}, zone {name}"))?;
         }
         for (name, z) in [("left", &l.row2.left), ("center", &l.row2.center), ("right", &l.row2.right)] {
-            all_widgets(z, &format!("écran {n}, rangée 2, zone {name}"))?;
+            all_widgets(cfg, z, &format!("écran {n}, rangée 2, zone {name}"))?;
         }
         let zones = ["zone_left", "zone_center", "zone_right"];
-        if let Some((k, v)) = s.offsets.iter().find(|(k, v)| {
-            !(ALL_WIDGETS.contains(&k.as_str()) || zones.contains(&k.as_str())) || !(-3000..=3000).contains(*v)
-        }) {
+        if let Some((k, v)) = s
+            .offsets
+            .iter()
+            .find(|(k, v)| !(known_widget(cfg, k) || zones.contains(&k.as_str())) || !(-3000..=3000).contains(*v))
+        {
             return Err(format!("écran {n} : décalage invalide « {k} = {v} » (widget ou zone connue, -3000 à 3000)"));
         }
-        if let Some(w) = s.styles.keys().chain(s.show_when.keys()).find(|k| !ALL_WIDGETS.contains(&k.as_str())) {
+        if let Some(w) = s.styles.keys().chain(s.show_when.keys()).find(|k| !known_widget(cfg, k)) {
             return Err(format!("écran {n} : style ou condition sur un widget inconnu « {w} »"));
         }
     }
