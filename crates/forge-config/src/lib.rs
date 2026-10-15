@@ -50,13 +50,15 @@ pub struct General {
     pub hide_on_fullscreen: bool,
     /// Remplace l'accent du thème par la couleur dominante du fond d'écran.
     pub accent_from_wallpaper: bool,
+    /// Cherche, vérifie et installe seule les nouvelles versions (copie installée par le MSI).
+    pub auto_update: bool,
     /// Pack d'icônes SVG : sous-dossier de `%APPDATA%\ForgeBar\icons`, ou `forge` (intégré). Vide = glyphes Segoe.
     pub icon_pack: String,
 }
 
 impl Default for General {
     fn default() -> Self {
-        Self { autostart: false, hide_on_fullscreen: true, accent_from_wallpaper: false, icon_pack: String::new() }
+        Self { autostart: false, hide_on_fullscreen: true, accent_from_wallpaper: false, auto_update: true, icon_pack: String::new() }
     }
 }
 

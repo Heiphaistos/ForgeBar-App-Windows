@@ -188,3 +188,7 @@ Une fenêtre de messages invisible porte les minuteurs : mesures toutes les seco
 - **Masquer / afficher la barre** : widget `toggle`, icône de notification (clic gauche), raccourci **Ctrl + Alt + B**, ou le menu. L'espace réservé est rendu au bureau tant qu'elle est masquée.
 - **Thèmes adaptatifs** : `adaptive = "system"` (mode clair/sombre et couleur d'accentuation de Windows) ou `adaptive = "wallpaper"` (teinte du fond d'écran). Recalculés dès que Windows change de mode ou de couleur. Thèmes fournis : `auto-windows`, `auto-fond`.
 - **Éditeur de réglages** : aperçu en direct (chaque changement est appliqué à la vraie barre), bouton Rétablir.
+
+## Mise à jour automatique (0.6.0)
+
+Au démarrage (après 30 s) puis toutes les 6 h, Forge Bar lit la dernière release GitHub. Si elle est plus récente, il télécharge le MSI de son architecture, **vérifie son SHA-256 contre `SHA256SUMS.txt` de la même release** (refus si différent), l'installe en silence (MSI par utilisateur, sans droits administrateur) puis se relance. Seule la copie installée par le MSI s'installe seule ; une copie de développement ou un zip annonce la version disponible. Menu clic droit : « Rechercher une mise à jour ». Désactivable : `general.auto_update = false`.

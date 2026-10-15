@@ -168,7 +168,7 @@ function pageMisc() {
   const packs = [['', 'Glyphes Segoe (aucun pack)'], ...S.icon_packs.map((p) => [p, p === 'forge' ? 'forge (intégré)' : p])];
   if (!packs.some(([p]) => p === g.icon_pack)) packs.push([g.icon_pack, g.icon_pack]);
   return [h('div', { class: 'panel' }, h('h2', {}, 'Général'),
-    h('div', { class: 'row' }, chk(g, 'autostart', 'Lancer avec Windows'), chk(g, 'hide_on_fullscreen', 'Masquer en plein écran'), chk(g, 'accent_from_wallpaper', 'Accent tiré du fond d\'écran')),
+    h('div', { class: 'row' }, chk(g, 'autostart', 'Lancer avec Windows'), chk(g, 'hide_on_fullscreen', 'Masquer en plein écran'), chk(g, 'accent_from_wallpaper', 'Accent tiré du fond d\'écran'), chk(g, 'auto_update', 'Mises à jour automatiques')),
     h('div', { class: 'row' }, pick(g, 'icon_pack', 'Pack d\'icônes', packs)),
     h('p', { class: 'hint' }, 'Packs personnalisés : sous-dossiers de %APPDATA%\\ForgeBar\\icons.')),
   h('div', { class: 'panel' }, h('h2', {}, 'Météo (Open-Meteo)'),

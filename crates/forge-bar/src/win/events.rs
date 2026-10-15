@@ -3,9 +3,9 @@
 use super::bar::{Ctx, WM_APPBAR};
 use super::panel::{Kind, Panel};
 use super::{
-    apps, clipboard, speedtest, sys, tray, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE, TIMER_CONFIG,
+    apps, clipboard, speedtest, sys, tray, updater, wallpaper, with_app, App, HOTKEY_TOGGLE, TIMER_AUTOHIDE, TIMER_CONFIG,
     TIMER_TICK, WM_APP_AUDIO, WM_APP_CLAUDE, WM_APP_CLOSE_PANEL, WM_APP_MEDIA, WM_APP_REBUILD, WM_APP_SPEED,
-    WM_APP_WEATHER,
+    WM_APP_UPDATE, WM_APP_WEATHER,
 };
 use crate::calendar;
 use crate::content::{self, Action};
@@ -26,6 +26,7 @@ const MENU_THEMES: usize = 11;
 const MENU_RELOAD: usize = 12;
 const MENU_QUIT: usize = 13;
 const MENU_HIDE_BAR: usize = 14;
+const MENU_UPDATE: usize = 15;
 const MENU_MUTE: usize = 20;
 const MENU_MIXER: usize = 21;
 const MENU_SOUND_SETTINGS: usize = 22;
@@ -294,6 +295,7 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
         add(menu, MENU_SETTINGS, "Personnaliser la barre…", none);
         add(menu, MENU_THEMES, "Dossier des thèmes", none);
         add(menu, MENU_RELOAD, "Recharger", none);
+        add(menu, MENU_UPDATE, "Rechercher une mise à jour", none);
         separator(menu);
         add(menu, MENU_QUIT, "Quitter Forge Bar", none);
         let mut p = POINT::default();
@@ -315,6 +317,12 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
                 with_app(|app| app.reload(true));
             }
             MENU_QUIT => PostQuitMessage(0),
+            MENU_UPDATE => {
+                with_app(|app| {
+                    tray::info(app.main, "Mise à jour", "Recherche en cours…");
+                    app.update.wake.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+            }
             MENU_HIDE_BAR => {
                 with_app(|app| app.toggle_bars());
             }
@@ -533,6 +541,33 @@ pub(super) unsafe extern "system" fn panel_proc(hwnd: HWND, msg: u32, wp: WPARAM
     }
 }
 
+/// Résultat d'une recherche de mise à jour : installation seule pour la copie installée par le MSI,
+/// simple annonce pour une copie lancée d'ailleurs (développement, zip).
+fn on_update(app: &mut App) {
+    use updater::Outcome;
+    let manual = app.update.manual.load(std::sync::atomic::Ordering::Relaxed);
+    let outcome = app.update.outcome.lock().unwrap().take();
+    match outcome {
+        Some(Outcome::Ready { version, msi }) => {
+            let exe = super::exe_path();
+            if updater::is_installed_copy(&exe) {
+                tray::info(app.main, "Mise à jour", &format!("Forge Bar {version} : installation, la barre redémarre…"));
+                updater::install_and_restart(&msi, &exe);
+                unsafe { PostQuitMessage(0) };
+            } else if manual || app.update_notified.as_deref() != Some(version.as_str()) {
+                let text = format!("La version {version} est prête mais cette copie n'est pas celle du MSI : installez {}", msi.display());
+                tray::info(app.main, "Mise à jour disponible", &text);
+                app.update_notified = Some(version);
+            }
+        }
+        Some(Outcome::UpToDate) if manual => {
+            tray::info(app.main, "Mise à jour", &format!("Forge Bar {} est à jour.", env!("CARGO_PKG_VERSION")));
+        }
+        Some(Outcome::Failed(e)) if manual => tray::balloon(app.main, "Mise à jour", &format!("Échec : {e}"), true),
+        _ => {}
+    }
+}
+
 pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
@@ -597,6 +632,10 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
         }
         WM_HOTKEY if wp.0 as i32 == HOTKEY_TOGGLE => {
             with_app(|app| app.toggle_bars());
+            LRESULT(0)
+        }
+        WM_APP_UPDATE => {
+            with_app(|app| on_update(app));
             LRESULT(0)
         }
         WM_APP_SPEED => {

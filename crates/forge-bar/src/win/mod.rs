@@ -17,6 +17,7 @@ pub mod snapshot;
 mod speedtest;
 mod sys;
 mod tray;
+mod updater;
 mod wallpaper;
 mod workers;
 
@@ -54,6 +55,7 @@ pub(crate) const WM_APP_MEDIA: u32 = WM_APP + 6;
 pub(crate) const WM_APP_WEATHER: u32 = WM_APP + 7;
 pub(crate) const WM_APP_CLOSE_PANEL: u32 = WM_APP + 8;
 pub(crate) const WM_APP_SPEED: u32 = WM_APP + 9;
+pub(crate) const WM_APP_UPDATE: u32 = WM_APP + 10;
 pub(crate) const HOTKEY_TOGGLE: i32 = 1;
 pub(crate) const TIMER_TICK: usize = 1;
 pub(crate) const TIMER_CONFIG: usize = 2;
@@ -98,6 +100,9 @@ pub(crate) struct App {
     pub speed: speedtest::Shared,
     /// Dernier résultat du test de débit, affiché dans le menu du widget réseau.
     pub speed_last: Option<String>,
+    pub update: updater::Shared,
+    /// Dernière version annoncée pour une copie qui ne peut pas s'installer seule (évite de répéter la bulle).
+    pub update_notified: Option<String>,
 }
 
 thread_local! {
@@ -283,6 +288,7 @@ impl App {
                 *self.weather_cfg.lock().unwrap() = self.cfg.weather.clone();
                 self.weather_wake.store(true, Ordering::Relaxed);
                 set_autostart(self.cfg.general.autostart);
+                self.update.enabled.store(self.cfg.general.auto_update, Ordering::Relaxed);
                 if self.pack_name != self.cfg.general.icon_pack {
                     self.pack_name = self.cfg.general.icon_pack.clone();
                     self.pack = icons::load(&self.pack_name, &self.d2d);
@@ -439,7 +445,11 @@ pub fn run() -> Result<()> {
             bars_off: false,
             speed: speedtest::Shared::default(),
             speed_last: None,
+            update: updater::Shared::default(),
+            update_notified: None,
         };
+        app.update.enabled.store(app.cfg.general.auto_update, Ordering::Relaxed);
+        let update = app.update.clone();
         app.sampler.watch_audio(main.0 as isize, WM_APP_AUDIO);
         app.sync_clipboard_listener();
         app.sampler.want_gpu = layout_uses(&app.cfg, "gpu");
@@ -455,6 +465,7 @@ pub fn run() -> Result<()> {
         workers::spawn_claude(main, WM_APP_CLAUDE, claude, claude_cfg, claude_wake);
         workers::spawn_weather(main, WM_APP_WEATHER, weather, weather_cfg, weather_wake);
         media::spawn(main, WM_APP_MEDIA, media);
+        updater::spawn(main, WM_APP_UPDATE, &update);
         tray::add(main);
         // Ctrl + Alt + B : afficher / masquer la barre. Silencieux si une autre application a déjà pris la combinaison.
         let _ = RegisterHotKey(main, HOTKEY_TOGGLE, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'B' as u32);
