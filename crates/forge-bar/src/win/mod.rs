@@ -346,6 +346,24 @@ impl App {
         self.invalidate();
     }
 
+    /// Remet les barres au-dessus d'un jeu en plein écran (mode « afficher la barre en jeu ») : sans ça, la fenêtre
+    /// du jeu, apparue après elle, passe devant.
+    pub(crate) fn raise_bars(&self) {
+        for b in self.bars.iter().filter(|b| !b.off) {
+            unsafe {
+                let _ = SetWindowPos(
+                    b.hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
+            }
+        }
+    }
+
     pub(crate) fn autohide(&mut self) {
         let mut p = windows::Win32::Foundation::POINT::default();
         if unsafe { GetCursorPos(&mut p) }.is_err() {

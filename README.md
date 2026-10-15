@@ -207,3 +207,8 @@ Journal : `%APPDATA%\ForgeBar\logsorge-bar.log` (widgets masqués faute de plac
 ## Disposition : les nouveaux widgets apparaissent tout seuls (0.9.0)
 
 Une disposition écrite à la main (glisser-déposer) ne recevait jamais les widgets créés après elle : après une mise à jour, les FPS, les températures, le disque ou les miniatures restaient dans la réserve, invisibles. Forge Bar ajoute maintenant automatiquement ces widgets (`layout.seen` retient ceux que la disposition connaît déjà ; un widget retiré ensuite à la main reste retiré). Dans l'éditeur, un clic sur un widget de la réserve l'ajoute à la barre, et « Tout ajouter à la barre » les place tous.
+
+## Fenêtres ouvertes et barre en jeu (0.10.0)
+
+- **Miniatures d'applications** : mêmes règles que la barre des tâches de Windows (ni fenêtres outils, ni surcouches qui ne prennent jamais le focus, ni les fenêtres de Forge Bar), jusqu'à 16 fenêtres. Les applications UWP (Calculatrice, Paramètres…) ont leur vraie icône, retrouvée par le shell. Un clic sur une fenêtre élevée (Gestionnaire des tâches) fonctionne aussi depuis une barre non élevée.
+- **Barre visible en jeu** : clic droit sur la barre, « Afficher la barre dans les jeux » (équivalent de `general.hide_on_fullscreen = false`). La barre est alors remise au-dessus de la fenêtre du jeu chaque seconde. Elle s'affiche par-dessus les jeux en fenêtré, sans bordure ou en plein écran « optimisé » de Windows ; un vrai plein écran exclusif la recouvre, comme n'importe quelle autre fenêtre.

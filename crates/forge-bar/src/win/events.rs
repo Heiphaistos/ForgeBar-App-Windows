@@ -28,6 +28,7 @@ const MENU_QUIT: usize = 13;
 const MENU_HIDE_BAR: usize = 14;
 const MENU_UPDATE: usize = 15;
 const MENU_FPS_ALLOW: usize = 16;
+const MENU_IN_GAME: usize = 17;
 const MENU_MUTE: usize = 20;
 const MENU_MIXER: usize = 21;
 const MENU_SOUND_SETTINGS: usize = 22;
@@ -299,6 +300,8 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
         let off = with_app(|app| app.bars_off).unwrap_or(false);
         let hide = if off { "Afficher la barre   Ctrl+Alt+B" } else { "Masquer la barre   Ctrl+Alt+B" };
         add(menu, MENU_HIDE_BAR, hide, none);
+        let in_game = with_app(|app| !app.cfg.general.hide_on_fullscreen).unwrap_or(false);
+        add(menu, MENU_IN_GAME, "Afficher la barre dans les jeux", if in_game { MF_CHECKED } else { none });
         add(menu, MENU_SETTINGS, "Personnaliser la barre…", none);
         add(menu, MENU_THEMES, "Dossier des thèmes", none);
         add(menu, MENU_RELOAD, "Recharger", none);
@@ -332,6 +335,13 @@ fn context_menu(hwnd: HWND, bar: Option<usize>, widget: Option<String>) {
                         "Suivi des FPS",
                         "Après validation, fermez puis rouvrez votre session Windows : le droit n'est pris en compte qu'à ce moment.",
                     )
+                });
+            }
+            MENU_IN_GAME => {
+                with_app(|app| {
+                    app.cfg.general.hide_on_fullscreen = !app.cfg.general.hide_on_fullscreen;
+                    let _ = std::fs::write(config_path(), app.cfg.to_toml());
+                    app.reload(true);
                 });
             }
             MENU_UPDATE => {
@@ -599,6 +609,9 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM,
                 TIMER_TICK if !app.bars_off && app.bars.iter().any(|b| !b.hidden) => {
                     app.sync_shared();
                     app.sampler.sample();
+                    if !app.cfg.general.hide_on_fullscreen && app.sampler.game_mode {
+                        app.raise_bars();
+                    }
                     app.invalidate();
                 }
                 TIMER_CONFIG => app.reload(false),
