@@ -64,8 +64,15 @@ function touch() {
 function fld(label, input, hint) {
   return h('label', { class: 'field' }, h('span', {}, label), input, hint ? h('span', { class: 'hint' }, hint) : null);
 }
-function chk(o, k, label, cb = touch) {
-  return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!o[k], onchange: (e) => { o[k] = e.target.checked; cb(); } }), label);
+// Interrupteur avec libellé et, si fourni, une ligne d'explication.
+function chk(o, k, label, cb = touch, desc) {
+  return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!o[k], onchange: (e) => { o[k] = e.target.checked; cb(); } }),
+    h('span', { class: 't' }, label, desc ? h('small', {}, desc) : null));
+}
+// Idem, mais l'interrupteur affiche l'inverse du réglage (« Afficher… » pour un réglage « masquer… »).
+function chkInv(o, k, label, cb = touch, desc) {
+  return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !o[k], onchange: (e) => { o[k] = !e.target.checked; cb(); } }),
+    h('span', { class: 't' }, label, desc ? h('small', {}, desc) : null));
 }
 function num(o, k, label, opt = {}) {
   const i = h('input', {
@@ -182,6 +189,22 @@ function themeBox(t) {
   return box;
 }
 
+// ---------- aperçu de votre barre (rendu réel par forge-bar, thème et disposition enregistrés) ----------
+let barPvSeq = 0;
+async function refreshBarPreview() {
+  const box = $('#barprev');
+  if (!S || !S.can_preview) { box.hidden = true; return; }
+  const s = cfg.screen[sel];
+  box.hidden = false;
+  $('#barprev-note').textContent = 'Écran ' + (sel + 1) + ' · ' + ((S.themes.find((t) => t.id === s.theme) || {}).name || s.theme);
+  if (s.edge === 'left' || s.edge === 'right') { $('#barprev-img').replaceChildren(h('p', { class: 'hint' }, 'Barre verticale : aperçu horizontal non disponible.')); return; }
+  const my = ++barPvSeq;
+  try {
+    const url = await fetchPng('/preview.png?theme=' + encodeURIComponent(s.theme) + '&width=1100' + presetParam());
+    if (my === barPvSeq) $('#barprev-img').replaceChildren(h('img', { src: url, alt: 'Aperçu de la barre' }));
+  } catch { /* l'aperçu reste vide : la vraie barre fait foi */ }
+}
+
 // ---------- chargement et enregistrement ----------
 async function refreshState() { S = await api('/api/state'); }
 async function load() {
@@ -196,7 +219,8 @@ async function saveConfig() {
     await api('/api/config', cfg);
     dirty = false;
     $('#save').disabled = true;
-    msg('Enregistré. La barre se met à jour d\'elle-même (environ 2 s).', 'ok');
+    msg('Enregistré. La barre se met à jour d\'elle-même.', 'ok');
+    refreshBarPreview();
     return true;
   } catch (e) {
     msg('Non enregistré : ' + e.message, 'bad');

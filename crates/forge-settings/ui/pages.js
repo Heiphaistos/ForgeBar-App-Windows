@@ -95,7 +95,7 @@ function pageLayout() {
   const missing = S.widgets.filter((w) => !usedWidgets().includes(w));
   const pool = zoneEl('Widgets disponibles : cliquez pour ajouter à la barre (déposez ici pour retirer)', missing, null, null);
   const addAll = missing.length ? h('button', { onclick: () => { for (const w of missing) { L.rows[0].right.push(w); } L.hand = true; layoutCommit(); setTab('layout'); } }, 'Tout ajouter à la barre (' + missing.length + ')') : null;
-  return [h('div', { class: 'panel' },
+  return [h('div', { class: 'panel' }, h('h2', {}, 'Disposition de la barre'),
     h('div', { class: 'row' },
       fld('Préréglage', selectEl(lay.preset, S.presets.map((p) => [p.id, PRESET_NAMES[p.id] || p.id]), (v) => {
         if (L.hand && !confirm('Remplacer vos zones personnalisées par ce préréglage ?')) { setTab('layout'); return; }
@@ -178,44 +178,106 @@ function pageClaude() {
       h('button', { class: 'danger', disabled: !S.admin_key, onclick: () => adminKeyAction('/api/admin-key/clear', {}, 'Clé supprimée.') }, 'Supprimer la clé')))];
 }
 
-// ---------- page : divers ----------
-function pageMisc() {
-  const g = cfg.general, w = cfg.weather, cl = cfg.clipboard;
+// ---------- pages : général, météo, presse-papiers ----------
+const desc = (t) => h('p', { class: 'hint desc' }, t);
+function pageGeneral() {
+  const g = cfg.general;
   const packs = [['', 'Glyphes Segoe (aucun pack)'], ...S.icon_packs.map((p) => [p, p === 'forge' ? 'forge (intégré)' : p])];
   if (!packs.some(([p]) => p === g.icon_pack)) packs.push([g.icon_pack, g.icon_pack]);
-  return [h('div', { class: 'panel' }, h('h2', {}, 'Général'),
-    h('div', { class: 'row' }, chk(g, 'autostart', 'Lancer avec Windows'), chk(g, 'hide_on_fullscreen', 'Masquer en plein écran'), chk(g, 'accent_from_wallpaper', 'Accent tiré du fond d\'écran'), chk(g, 'auto_update', 'Mises à jour automatiques')),
-    h('div', { class: 'row' }, pick(g, 'icon_pack', 'Pack d\'icônes', packs)),
-    h('p', { class: 'hint' }, 'Packs personnalisés : sous-dossiers de %APPDATA%\\ForgeBar\\icons.')),
-  h('div', { class: 'panel' }, h('h2', {}, 'Météo (Open-Meteo)'),
-    h('div', { class: 'row' }, chk(w, 'enabled', 'Activée'), txt(w, 'city', 'Ville'), num(w, 'latitude', 'Latitude', { min: -90, max: 90, step: 0.0001, nullable: true }),
+  return [
+    h('div', { class: 'panel' }, h('h2', {}, 'Démarrage et mises à jour'),
+      desc('Forge Bar se lance avec votre session et se tient à jour tout seul.'),
+      chk(g, 'autostart', 'Lancer avec Windows', touch, 'La barre apparaît dès l\'ouverture de session.'),
+      chk(g, 'auto_update', 'Mises à jour automatiques', touch, 'Vérification au démarrage puis toutes les 6 h, contrôle SHA-256, installation silencieuse. Clic droit sur la barre : « Rechercher une mise à jour ».')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Jeux et plein écran'),
+      desc('Forge Bar n\'injecte rien dans les jeux et reste compatible avec les anti-triche. Il peut rester visible par-dessus un jeu en fenêtré, sans bordure ou en plein écran « optimisé » ; un plein écran exclusif le recouvre comme toute autre fenêtre.'),
+      chkInv(g, 'hide_on_fullscreen', 'Afficher la barre dans les jeux', touch, 'Désactivé : la barre se masque dès qu\'une application passe en plein écran. Activé : elle reste au-dessus (Ctrl+Alt+B pour la masquer à la main).')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Apparence'),
+      chk(g, 'accent_from_wallpaper', 'Accent tiré du fond d\'écran', touch, 'Remplace la couleur d\'accent du thème par la couleur dominante de votre fond d\'écran.'),
+      h('div', { class: 'row' }, pick(g, 'icon_pack', 'Pack d\'icônes', packs)),
+      h('p', { class: 'hint' }, 'Packs personnalisés : sous-dossiers de %APPDATA%\\ForgeBar\\icons.')),
+  ];
+}
+function pageWeather() {
+  const w = cfg.weather;
+  return [h('div', { class: 'panel' }, h('h2', {}, 'Météo (Open-Meteo)'),
+    desc('Service gratuit et sans clé. Renseignez une ville, ou des coordonnées précises.'),
+    chk(w, 'enabled', 'Afficher la météo dans la barre'),
+    h('div', { class: 'row' }, txt(w, 'city', 'Ville'),
+      num(w, 'latitude', 'Latitude', { min: -90, max: 90, step: 0.0001, nullable: true }),
       num(w, 'longitude', 'Longitude', { min: -180, max: 180, step: 0.0001, nullable: true }),
-      pick(w, 'unit', 'Unité', [['celsius', '°C'], ['fahrenheit', '°F']]), num(w, 'refresh_minutes', 'Rafraîchissement (min)', { min: 1 }))),
-  h('div', { class: 'panel' }, h('h2', {}, 'Presse-papiers (en mémoire uniquement)'),
-    h('div', { class: 'row' }, chk(cl, 'enabled', 'Activé'), num(cl, 'history', 'Éléments gardés', { min: 1, max: 100 }), num(cl, 'max_chars', 'Longueur affichée', { min: 10, max: 500 })))];
+      pick(w, 'unit', 'Unité', [['celsius', '°C'], ['fahrenheit', '°F']]),
+      num(w, 'refresh_minutes', 'Rafraîchissement (min)', { min: 1 })))];
+}
+function pageClipboard() {
+  const cl = cfg.clipboard;
+  return [h('div', { class: 'panel' }, h('h2', {}, 'Historique du presse-papiers'),
+    desc('Gardé en mémoire uniquement : jamais écrit sur le disque, vidé à la fermeture.'),
+    chk(cl, 'enabled', 'Activer l\'historique'),
+    h('div', { class: 'row' }, num(cl, 'history', 'Éléments gardés', { min: 1, max: 100 }), num(cl, 'max_chars', 'Longueur affichée (caractères)', { min: 10, max: 500 })))];
 }
 
-// ---------- navigation et démarrage ----------
-const TABS = [['themes', 'Thèmes', pageThemes], ['editor', 'Éditeur de thème', pageEditor], ['layout', 'Disposition', pageLayout], ['screens', 'Écrans', pageScreens], ['claude', 'Claude', pageClaude], ['misc', 'Divers', pageMisc]];
+// ---------- navigation par catégories ----------
+const ICONS = {
+  themes: 'M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.3-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.3A3.9 3.9 0 0 0 21 10.6C21 6.4 17 3 12 3zM7.5 11h.01M10 7.5h.01M14.5 7.5h.01',
+  editor: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
+  layout: 'M3 5h18v14H3zM3 10h18M9 10v9',
+  screens: 'M3 4h18v12H3zM8 20h8M12 16v4',
+  claude: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+  weather: 'M7 18a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 9a4.5 4.5 0 0 1 .5 9z',
+  clipboard: 'M9 3h6v3H9zM6 5h3M15 5h3v16H6V5z',
+  general: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4',
+};
+// [id, libellé, page, groupe, sous-titre]
+const TABS = [
+  ['themes', 'Thèmes', pageThemes, 'Apparence', 'Choisissez l\'allure de votre barre : un clic l\'applique en direct.'],
+  ['editor', 'Éditeur de thème', pageEditor, 'Apparence', 'Créez votre propre thème à partir d\'un existant.'],
+  ['layout', 'Disposition', pageLayout, 'Barre', 'Quels widgets, dans quelle zone, avec quel style et quel décalage.'],
+  ['screens', 'Écrans et position', pageScreens, 'Barre', 'Bord, taille, mode et thème de la barre sur chaque écran.'],
+  ['claude', 'HUD Claude', pageClaude, 'Intégrations', 'Consommation, budgets, alertes et clé Admin API.'],
+  ['weather', 'Météo', pageWeather, 'Intégrations', 'Conditions actuelles dans la barre.'],
+  ['clipboard', 'Presse-papiers', pageClipboard, 'Intégrations', 'Historique rapide des derniers textes copiés.'],
+  ['general', 'Général', pageGeneral, 'Système', 'Démarrage, mises à jour, jeux et apparence.'],
+];
+function svgIcon(name) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', ICONS[name] || '');
+  s.append(p);
+  return s;
+}
 function setTab(t) {
   tab = t;
   gen++;
   document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === t));
-  const page = TABS.find((x) => x[0] === t)[2];
-  $('#main').replaceChildren(...[page()].flat(Infinity).filter(Boolean));
+  const entry = TABS.find((x) => x[0] === t);
+  $('#page-title').textContent = entry[1];
+  $('#page-sub').textContent = entry[4];
+  $('#main').replaceChildren(...[entry[2]()].flat(Infinity).filter(Boolean));
+}
+function buildNav() {
+  const nodes = [];
+  let group = '';
+  for (const [id, label, , g] of TABS) {
+    if (g !== group) { group = g; nodes.push(h('div', { class: 'nav-group' }, g)); }
+    nodes.push(h('button', { role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, svgIcon(id), label));
+  }
+  $('#tabs').replaceChildren(...nodes);
 }
 function fillScreens() {
   const s = $('#screen-sel');
-  s.replaceChildren(...cfg.screen.map((x, i) => h('option', { value: i }, 'Écran ' + (i + 1) + ' (' + x.id + ')')));
+  s.replaceChildren(...cfg.screen.map((x, i) => h('option', { value: i }, 'Écran ' + (i + 1) + ' (' + (x.id === 'primary' ? 'principal' : x.id === 'all' ? 'tous' : x.id) + ')')));
   s.value = sel;
 }
 async function start() {
-  $('#tabs').replaceChildren(...TABS.map(([id, label]) => h('button', { role: 'tab', 'data-tab': id, onclick: () => setTab(id) }, label)));
+  buildNav();
   $('#save').addEventListener('click', saveConfig);
   $('#live').checked = live;
   $('#live').addEventListener('change', (e) => { live = e.target.checked; try { localStorage.setItem('live', live ? '1' : '0'); } catch { /* stockage indisponible */ } });
   $('#revert').addEventListener('click', async () => { cfg = clone(orig); await saveConfig(); fillScreens(); setTab(tab); msg('Réglages d\'origine rétablis.', 'ok'); });
-  $('#screen-sel').addEventListener('change', (e) => { sel = Number(e.target.value); wsel = null; setTab(tab); });
+  $('#screen-sel').addEventListener('change', (e) => { sel = Number(e.target.value); wsel = null; setTab(tab); refreshBarPreview(); });
   $('#quit').addEventListener('click', async () => {
     if (dirty && !confirm('Des modifications ne sont pas enregistrées. Fermer quand même ?')) return;
     try { await api('/api/quit', {}); } catch { /* déjà arrêté */ }
@@ -227,6 +289,7 @@ async function start() {
     await load();
     fillScreens();
     setTab('themes');
+    refreshBarPreview();
   } catch (e) {
     $('#main').replaceChildren(h('p', { class: 'err' }, 'Impossible de charger l\'état : ' + e.message + '. Rouvrez l\'éditeur depuis forge-settings (le jeton est dans l\'adresse).'));
   }

@@ -9,19 +9,35 @@
 <style nonce="{{NONCE}}"><!--CSS--></style>
 </head>
 <body>
-<header>
-  <img class="logo" alt="" width="40" height="40" src="<!--LOGO-->">
-  <h1>Forge Bar</h1>
-  <label class="inline">Écran <select id="screen-sel" aria-label="Écran édité"></select></label>
-  <nav id="tabs" role="tablist"></nav>
-  <span class="spacer"></span>
-  <label class="inline"><input id="live" type="checkbox" checked> Aperçu en direct</label>
-  <button id="revert" title="Annule tout ce qui a été changé depuis l'ouverture">Rétablir</button>
-  <span id="msg" role="status" aria-live="polite"></span>
-  <button id="save" class="primary" disabled>Enregistrer</button>
-  <button id="quit" title="Arrête le serveur local">Fermer</button>
-</header>
-<main id="main"><p>Chargement…</p></main>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <img class="logo" alt="" width="44" height="44" src="<!--LOGO-->">
+      <div class="brand-text"><strong>Forge Bar</strong><small>Paramètres</small></div>
+    </div>
+    <nav id="tabs" role="tablist" aria-label="Sections"></nav>
+    <div class="side-foot">
+      <button id="quit" class="ghost" title="Arrête le serveur local">Fermer l'éditeur</button>
+    </div>
+  </aside>
+  <div class="content">
+    <header class="top">
+      <div class="titles"><h1 id="page-title">Paramètres</h1><p id="page-sub"></p></div>
+      <div class="tools">
+        <label class="inline">Écran <select id="screen-sel" aria-label="Écran édité"></select></label>
+        <label class="check mini"><input id="live" type="checkbox" checked><span>Aperçu en direct</span></label>
+        <button id="revert" class="ghost" title="Annule tout ce qui a été changé depuis l'ouverture">Rétablir</button>
+        <span id="msg" role="status" aria-live="polite"></span>
+        <button id="save" class="primary" disabled>Enregistrer</button>
+      </div>
+    </header>
+    <section class="barprev" id="barprev" aria-label="Aperçu de la barre">
+      <div class="barprev-head"><span>Votre barre</span><small id="barprev-note"></small></div>
+      <div class="barprev-img" id="barprev-img"></div>
+    </section>
+    <main id="main"><p>Chargement…</p></main>
+  </div>
+</div>
 <script nonce="{{NONCE}}"><!--JS--></script>
 </body>
 </html>
