@@ -27,8 +27,9 @@ jobs:
         run: cargo build --release --workspace --target ${{ matrix.target }}
       - name: Visual check of every theme
         run: |
-          target/${{ matrix.target }}/release/forge-bar.exe --snapshot-all dist/themes
-          if ($LASTEXITCODE -ne 0) { Get-Content dist/themes/report.txt; exit 1 }
+          # forge-bar.exe is a GUI-subsystem app: PowerShell does not wait for it or set $LASTEXITCODE
+          $p = Start-Process -FilePath target/${{ matrix.target }}/release/forge-bar.exe -ArgumentList '--snapshot-all','dist/themes' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Get-Content dist/themes/report.txt; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: theme-previews-${{ matrix.target }}
