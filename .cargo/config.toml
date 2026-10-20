@@ -1,9 +1,10 @@
 # CRT statique : l'ex�cutable n'a besoin d'aucun redistribuable Visual C++.
+# Control Flow Guard (cibles MSVC uniquement).
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
 
 [target.i686-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
 
 # Compilation crois�e depuis Linux (facultatif) : MinGW-w64.
 [target.x86_64-pc-windows-gnu]
