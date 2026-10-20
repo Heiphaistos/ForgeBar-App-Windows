@@ -17,7 +17,7 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 3600);
 /// Clé publique Ed25519 (32 octets en hexadécimal, 64 caractères) qui signe `SHA256SUMS.txt`. À renseigner
 /// par le propriétaire du projet (la clé privée reste dans le secret CI `UPDATE_SIGNING_KEY`, jamais dans le
 /// dépôt). Tant qu'elle est vide, toute mise à jour est refusée.
-const UPDATE_PUBLIC_KEY_HEX: &str = "";
+const UPDATE_PUBLIC_KEY_HEX: &str = "85932ec53e0f543cb78a076b304fbaef08c3e95df85d95136b3d89730e6085b6";
 const MAX_MSI: usize = 64 * 1024 * 1024;
 
 /// Résultat d'une vérification, lu par la fenêtre principale.
