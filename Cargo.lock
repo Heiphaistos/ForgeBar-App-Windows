@@ -57,6 +57,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "ed25519-compact"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1454db4f2edb7f0e8fe0c5b375b0c978fc63244cc9f010d160e417eb10139aa8"
+
+[[package]]
 name = "embed-resource"
 version = "3.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -84,9 +90,10 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
 name = "forge-bar"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
+ "ed25519-compact",
  "embed-resource",
  "forge-claude",
  "forge-config",
@@ -98,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "forge-claude"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "chrono",
  "forge-config",
@@ -108,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "forge-config"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "toml 0.8.23",
@@ -116,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "forge-settings"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "embed-resource",
  "forge-config",

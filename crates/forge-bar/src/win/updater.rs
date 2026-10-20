@@ -1,6 +1,6 @@
 //! Mise à jour automatique : interroge la dernière release GitHub, télécharge le MSI de la bonne
-//! architecture, vérifie son SHA-256 contre `SHA256SUMS.txt` de la même release, puis prévient la fenêtre
-//! principale. Tourne sur un fil de fond ; l'installation (silencieuse, par utilisateur) est lancée par l'appli.
+//! architecture, vérifie la signature Ed25519 de `SHA256SUMS.txt` (clé publique épinglée ci-dessous) puis le
+//! SHA-256 du MSI contre ce fichier signé, puis prévient la fenêtre principale. Tourne sur un fil de fond ; l'installation (silencieuse, par utilisateur) est lancée par l'appli.
 
 use super::http;
 use serde_json::Value;
@@ -14,6 +14,10 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 const HOST: &str = "api.github.com";
 const REPO: &str = "Heiphaistos/ForgeBar-App-Windows";
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 3600);
+/// Clé publique Ed25519 (32 octets en hexadécimal, 64 caractères) qui signe `SHA256SUMS.txt`. À renseigner
+/// par le propriétaire du projet (la clé privée reste dans le secret CI `UPDATE_SIGNING_KEY`, jamais dans le
+/// dépôt). Tant qu'elle est vide, toute mise à jour est refusée.
+const UPDATE_PUBLIC_KEY_HEX: &str = "";
 const MAX_MSI: usize = 64 * 1024 * 1024;
 
 /// Résultat d'une vérification, lu par la fenêtre principale.
@@ -44,8 +48,9 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     Some((it.next()??, it.next()??, it.next()??))
 }
 
-/// Url du MSI de l'architecture courante et de la liste des empreintes, dans une réponse `releases/latest`.
-fn pick_assets(release: &Value, version: &str, arch: &str) -> Option<(String, String)> {
+/// Urls du MSI de l'architecture courante, de la liste des empreintes et de sa signature, dans une réponse
+/// `releases/latest`.
+fn pick_assets(release: &Value, version: &str, arch: &str) -> Option<(String, String, String)> {
     let wanted = format!("ForgeBar-{version}-{arch}.msi");
     let url_of = |name: &str| {
         release["assets"]
@@ -55,7 +60,26 @@ fn pick_assets(release: &Value, version: &str, arch: &str) -> Option<(String, St
             .and_then(|a| a["browser_download_url"].as_str())
             .map(String::from)
     };
-    Some((url_of(&wanted)?, url_of("SHA256SUMS.txt")?))
+    Some((url_of(&wanted)?, url_of("SHA256SUMS.txt")?, url_of("SHA256SUMS.txt.sig")?))
+}
+
+fn from_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.is_ascii() {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+}
+
+/// Vérifie la signature Ed25519 brute (64 octets) de `sums` avec la clé hexadécimale `key_hex`.
+fn verify_manifest(key_hex: &str, sums: &[u8], sig: &[u8]) -> Result<(), String> {
+    if key_hex.is_empty() {
+        return Err("clé de signature des mises à jour non configurée : mise à jour refusée".into());
+    }
+    let key = from_hex(key_hex)
+        .and_then(|b| ed25519_compact::PublicKey::from_slice(&b).ok())
+        .ok_or("clé de signature des mises à jour invalide")?;
+    let sig = ed25519_compact::Signature::from_slice(sig).map_err(|_| "signature de mise à jour illisible")?;
+    key.verify(sums, &sig).map_err(|_| "signature de mise à jour invalide : installation refusée".to_string())
 }
 
 /// Empreinte attendue d'un fichier dans un `SHA256SUMS.txt` (« <hash>  <nom> », fins de ligne CRLF tolérées).
@@ -99,10 +123,16 @@ fn check() -> Result<Outcome, String> {
     if latest <= current {
         return Ok(Outcome::UpToDate);
     }
+    if UPDATE_PUBLIC_KEY_HEX.is_empty() {
+        return Err("clé de signature des mises à jour non configurée : mise à jour refusée".into());
+    }
     let version = tag.trim_start_matches('v').to_string();
     let arch = if cfg!(target_arch = "x86_64") { "x64" } else { "x86" };
-    let (msi_url, sums_url) = pick_assets(&release, &version, arch).ok_or("MSI absent de la release")?;
-    let sums = String::from_utf8_lossy(&download(&sums_url, 1 << 20)?).into_owned();
+    let (msi_url, sums_url, sig_url) =
+        pick_assets(&release, &version, arch).ok_or("MSI, empreintes ou signature absents de la release")?;
+    let sums_raw = download(&sums_url, 1 << 20)?;
+    verify_manifest(UPDATE_PUBLIC_KEY_HEX, &sums_raw, &download(&sig_url, 1024)?)?;
+    let sums = String::from_utf8_lossy(&sums_raw).into_owned();
     let name = format!("ForgeBar-{version}-{arch}.msi");
     let want = expected_hash(&sums, &name).ok_or("empreinte absente de SHA256SUMS.txt")?;
     let data = download(&msi_url, MAX_MSI)?;
@@ -195,10 +225,11 @@ mod tests {
         let r: Value = serde_json::from_str(
             r#"{"assets":[{"name":"ForgeBar-0.6.0-x64.msi","browser_download_url":"https://h/a"},
                {"name":"ForgeBar-0.6.0-x86.msi","browser_download_url":"https://h/b"},
-               {"name":"SHA256SUMS.txt","browser_download_url":"https://h/s"}]}"#,
+               {"name":"SHA256SUMS.txt","browser_download_url":"https://h/s"},
+               {"name":"SHA256SUMS.txt.sig","browser_download_url":"https://h/g"}]}"#,
         )
         .unwrap();
-        assert_eq!(pick_assets(&r, "0.6.0", "x86"), Some(("https://h/b".into(), "https://h/s".into())));
+        assert_eq!(pick_assets(&r, "0.6.0", "x86"), Some(("https://h/b".into(), "https://h/s".into(), "https://h/g".into())));
         assert_eq!(pick_assets(&r, "0.7.0", "x64"), None);
     }
 
@@ -217,6 +248,22 @@ mod tests {
         assert!(s.contains("msiexec /i \"C:\\a b\\x.msi\" /qn"));
         assert!(s.contains("start \"\" \"C:\\c d\\forge-bar.exe\""));
         assert!(s.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn manifest_signature_is_enforced() {
+        use ed25519_compact::{KeyPair, Seed};
+        let kp = KeyPair::from_seed(Seed::new([7; 32]));
+        let key: String = kp.pk.iter().map(|b| format!("{b:02x}")).collect();
+        let sums = b"abc  ForgeBar-0.6.0-x64.msi
+";
+        let sig = kp.sk.sign(sums, None);
+        assert_eq!(verify_manifest(&key, sums, sig.as_ref()), Ok(()));
+        assert!(verify_manifest(&key, b"tampered", sig.as_ref()).is_err());
+        assert!(verify_manifest(&key, sums, &[0; 10]).is_err());
+        assert!(verify_manifest("", sums, sig.as_ref()).is_err(), "clé vide : refus");
+        assert!(verify_manifest("zz", sums, sig.as_ref()).is_err());
+        assert!(UPDATE_PUBLIC_KEY_HEX.is_empty() || from_hex(UPDATE_PUBLIC_KEY_HEX).is_some_and(|b| b.len() == 32));
     }
 
     #[test]

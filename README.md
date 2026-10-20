@@ -191,7 +191,9 @@ Une fenêtre de messages invisible porte les minuteurs : mesures toutes les seco
 
 ## Mise à jour automatique (0.6.0)
 
-Au démarrage (après 30 s) puis toutes les 6 h, Forge Bar lit la dernière release GitHub. Si elle est plus récente, il télécharge le MSI de son architecture, **vérifie son SHA-256 contre `SHA256SUMS.txt` de la même release** (refus si différent), l'installe en silence (MSI par utilisateur, sans droits administrateur) puis se relance. Seule la copie installée par le MSI s'installe seule ; une copie de développement ou un zip annonce la version disponible. Menu clic droit : « Rechercher une mise à jour ». Désactivable : `general.auto_update = false`.
+Au démarrage (après 30 s) puis toutes les 6 h, Forge Bar lit la dernière release GitHub. Si elle est plus récente, il télécharge le MSI de son architecture, **vérifie la signature Ed25519 de `SHA256SUMS.txt` (clé publique épinglée dans `updater.rs`, constante `UPDATE_PUBLIC_KEY_HEX`) puis son SHA-256 contre ce fichier signé** (refus si différent), l'installe en silence (MSI par utilisateur, sans droits administrateur) puis se relance. Seule la copie installée par le MSI s'installe seule ; une copie de développement ou un zip annonce la version disponible. Menu clic droit : « Rechercher une mise à jour ». Désactivable : `general.auto_update = false`.
+
+**Clé de signature (à fournir par le propriétaire)** : tant que `UPDATE_PUBLIC_KEY_HEX` est vide, toute mise à jour est refusée. Générer une paire Ed25519, mettre la clé publique (64 caractères hexadécimaux) dans `crates/forge-bar/src/win/updater.rs`, et la graine privée (hexadécimal, 32 octets) dans le secret de dépôt `UPDATE_SIGNING_KEY` ; le workflow de release signe `SHA256SUMS.txt` (`scripts/sign-sums.py`) et publie `SHA256SUMS.txt.sig`, et échoue si le secret manque.
 
 ## FPS, températures et anti-triche (0.8.0)
 
