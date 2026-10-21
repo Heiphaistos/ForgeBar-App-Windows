@@ -85,6 +85,7 @@ jobs:
           pip install cryptography==43.0.3
           python scripts/sign-sums.py dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig
       - name: GitHub release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
