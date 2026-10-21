@@ -229,7 +229,10 @@ mod tests {
                {"name":"SHA256SUMS.txt.sig","browser_download_url":"https://h/g"}]}"#,
         )
         .unwrap();
-        assert_eq!(pick_assets(&r, "0.6.0", "x86"), Some(("https://h/b".into(), "https://h/s".into(), "https://h/g".into())));
+        assert_eq!(
+            pick_assets(&r, "0.6.0", "x86"),
+            Some(("https://h/b".into(), "https://h/s".into(), "https://h/g".into()))
+        );
         assert_eq!(pick_assets(&r, "0.7.0", "x64"), None);
     }
 
